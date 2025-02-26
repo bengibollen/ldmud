@@ -2386,6 +2386,13 @@ get_common_array_type (lpctype_t* t1, lpctype_t* t2)
 }
 
 static lpctype_t*
+get_common_lpc_type (lpctype_t* t1, lpctype_t* t2)
+
+{
+    return get_common_type(t1, t2);
+}
+
+static lpctype_t*
 get_sub_array_type (lpctype_t* t1, lpctype_t* t2)
 
 /* <t1> and <t2> are arrays. This function returns <t1> if
@@ -2561,7 +2568,7 @@ binary_op_types_t types_binary_and_assignment[] = {
     { &_lpctype_mapping,   &_lpctype_mapping,   &_lpctype_mapping, NULL                  , NULL                   , NULL                   },
     { &_lpctype_mapping,   &_lpctype_any_array, &_lpctype_mapping, NULL                  , NULL                   , NULL                   },
     { &_lpctype_any_array, &_lpctype_mapping,   NULL,              &get_first_type       , NULL                   , NULL                   },
-    { &_lpctype_any_array, &_lpctype_any_array, NULL,              &get_common_type      , NULL                   , NULL                   },
+    { &_lpctype_any_array, &_lpctype_any_array, NULL,              &get_common_lpc_type  , NULL                   , NULL                   },
     { &_lpctype_int,       &_lpctype_int,       &_lpctype_int,     NULL                  , NULL                   , NULL                   },
     { &_lpctype_string,    &_lpctype_string,    &_lpctype_string,  NULL                  , NULL                   , NULL                   },
     { &_lpctype_bytes,     &_lpctype_bytes,     &_lpctype_bytes,   NULL                  , NULL                   , NULL                   },
@@ -2611,7 +2618,7 @@ binary_op_types_t types_binary_and[] = {
     { &_lpctype_mapping,   &_lpctype_mapping,   &_lpctype_mapping, NULL                  , NULL                   , NULL                   },
     { &_lpctype_mapping,   &_lpctype_any_array, &_lpctype_mapping, NULL                  , NULL                   , NULL                   },
     { &_lpctype_any_array, &_lpctype_mapping,   NULL,              &get_first_type       , NULL                   , NULL                   },
-    { &_lpctype_any_array, &_lpctype_any_array, NULL,              &get_common_type      , NULL                   , NULL                   },
+    { &_lpctype_any_array, &_lpctype_any_array, NULL,              &get_common_lpc_type  , NULL                   , NULL                   },
     { &_lpctype_int,       &_lpctype_int,       &_lpctype_int,     NULL                  , NULL                   , NULL                   },
     { &_lpctype_string,    &_lpctype_string,    &_lpctype_string,  NULL                  , NULL                   , NULL                   },
     { &_lpctype_bytes,     &_lpctype_bytes,     &_lpctype_bytes,   NULL                  , NULL                   , NULL                   },
@@ -2623,7 +2630,7 @@ binary_op_types_t types_binary_and[] = {
  * Basically there must be a common type, but ints can be compared with floats also.
  */
 binary_op_types_t types_equality[] = {
-    { &_lpctype_mixed,     &_lpctype_mixed,     &_lpctype_int,     &get_common_type      , NULL                   , NULL                   },
+    { &_lpctype_mixed,     &_lpctype_mixed,     &_lpctype_int,     &get_common_lpc_type  , NULL                   , NULL                   },
     { &_lpctype_int,       &_lpctype_float,     &_lpctype_int,     NULL                  , NULL                   , NULL                   },
     { &_lpctype_float,     &_lpctype_int,       &_lpctype_int,     NULL                  , NULL                   , NULL                   },
     { NULL, NULL, NULL, NULL, NULL, NULL }
@@ -6680,7 +6687,7 @@ find_struct ( ident_t * ident, efun_override_t override )
                         lt->t_struct.def_idx = LAMBDA_STRUCTS_COUNT;
 
                         assign_svalue_no_free(&ref_str, str); /* Add a reference. */
-                        idx = store_lambda_value(str);
+                        idx = store_lambda_value(&ref_str);
 
                         name->u.global.struct_id = LAMBDA_STRUCTS_COUNT;
                         ADD_LAMBDA_STRUCT((lambda_struct_ident_t){
@@ -8659,7 +8666,7 @@ lookup_function (ident_t *ident, char* super, efun_override_t override)
                 int idx;
 
                 assign_svalue_no_free(&ref_fun, fun); /* Add a reference. */
-                idx = store_lambda_value(fun);
+                idx = store_lambda_value(&ref_fun);
 
                 ident->u.global.function = LAMBDA_FUNCTIONS_COUNT;
                 ADD_LAMBDA_FUNCTION((lambda_ident_t){.kind = LAMBDA_IDENT_VALUE, .value_index = idx});
@@ -8770,7 +8777,7 @@ lookup_global_variable (ident_t *ident)
                 int idx;
 
                 assign_svalue_no_free(&ref_var, var); /* Add a reference. */
-                idx = store_lambda_value(var);
+                idx = store_lambda_value(&ref_var);
 
                 ident->u.global.variable = LAMBDA_VARIABLES_COUNT;
                 ADD_LAMBDA_VARIABLE((lambda_ident_t){.kind = LAMBDA_IDENT_VALUE, .value_index = idx});
@@ -15267,10 +15274,11 @@ expr4:
                       i = LAMBDA_VARIABLE(i).object_index;
                       varp = prog->variables+i;
 
-                      if (i < prog->num_virtual_variables)
-                          i |= VIRTUAL_VAR_TAG;
-                      else
-                          i -= prog->num_virtual_variables;
+                      /* No special handling for virtual variables required
+                       * here, as lambdas will always be executed with
+                       * variable_index_offset = 0, thus F_IDENTIFIER will
+                       * also serve virtual variables.
+                       */
                   }
                   else
                   {
@@ -15635,10 +15643,6 @@ name_lvalue:
 
                       i = LAMBDA_VARIABLE(i).object_index;
                       varp = prog->variables+i;
-                      if (i < prog->num_virtual_variables)
-                          i |= VIRTUAL_VAR_TAG;
-                      else
-                          i -= prog->num_virtual_variables;
                   }
                   else
                   {
@@ -17549,6 +17553,10 @@ function_call:
                           program_t *prog = get_current_object_program();
 
                           inherited_function.flags = prog->functions[f];
+                          if (inherited_function.flags & NAME_INHERITED)
+                            inherited_function.flags &= ~INHERIT_MASK;
+                          else
+                            inherited_function.flags &= ~FUNSTART_MASK;
                           get_function_information(&inherited_function, prog, f);
                           arg_types = prog->argument_types;
                           types = prog->types;

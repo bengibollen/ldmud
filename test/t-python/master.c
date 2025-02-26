@@ -277,6 +277,12 @@ void run_test()
                  || s != "10715086071862673209484250490600018105614048117055336074437503883703510511249361224931983788156958581275946729175531468251871452856923140435984577574698574803934567774824230985421074605062371141877954182153046474983581941267398767559165543946077062914571196477686542167660429831652624386837205668069376000")
                     return 0;
 
+                // Check __int__, __float__ und __str__ working.
+                if (to_type(val, [int]) != 1000
+                 || to_type(val, [string]) != "1000"
+                 || to_type(val, [float]) != 1000.0)
+                    return 0;
+
                 val <<= 1000;
                 bigint val2 = restore_value(save_value(val));
                 if (val != val2)
@@ -349,6 +355,10 @@ void run_test()
                  || e.get_value() != 101)
                     return 0;
 
+                /* Check to_type() using __convert__(). */
+                if (to_type(b, [int|string]) != 101)
+                    return 0;
+
                 /* And works with complex data structures. */
                 b.set_value(({20,30}));
                 c = restore_value(save_value(b));
@@ -398,6 +408,14 @@ void run_test()
                 return sizeof(oblist) == 1 && oblist[0] == this_object();
             :)
         }),
+        ({
+            "Python BEFORE_INSTRUCTION hook", 0,
+            (:
+                return python_get_last_program_name() == __FILE__ &&
+                       python_get_last_file_name() == __FILE__ &&
+                       python_get_last_line_number() == __LINE__;
+            :)
+        }),
         ({ "Python GC", 0,
             (:
                 /* We just start it and see, that it doesn't crash. */
@@ -407,8 +425,18 @@ void run_test()
         }),
         ({ "Python test suite", 0,
             (:
+                string err;
+                int result;
+
                 msg("\n");
-                return python_test();
+                /* For the call_stack test create additional frames. */
+                err = catch(result = funcall(#'funcall, #'python_test));
+                if (err)
+                {
+                    msg("Got error: %s", err);
+                    return 0;
+                }
+                return result;
             :)
         }),
         ({

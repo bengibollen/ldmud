@@ -189,6 +189,7 @@
 
 #include "my-alloca.h"
 #include <assert.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -757,6 +758,16 @@ struct timeval profiling_timevalue = {0, 0};
 
 static Bool received_prof_signal = MY_FALSE;
 
+#ifdef USE_POSIX_TIMERS
+static timer_t prof_timer;
+  /* POSIX timer id used for the profiling signal.
+   */
+
+static bool have_prof_timer = false;
+  /* Is prof_timer a valid timer?
+   */
+#endif
+
 p_int used_memory_at_eval_start = 0;
   /* used memory (in bytes) at the beginning of the current execution,
    * set by mark_start_evaluation() (and v_limited()).
@@ -841,6 +852,28 @@ assign_eval_cost_inl(void)
 void assign_eval_cost(void) { assign_eval_cost_inl(); }
 
 /*-------------------------------------------------------------------------*/
+
+bool
+init_profiling_timer ()
+/* Initializes the timer used for long execution signals.
+ */
+{
+#ifdef USE_POSIX_TIMERS
+    struct sigevent sev;
+
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIGPROF;
+    sev.sigev_value.sival_ptr = NULL;
+    sev.sigev_value.sival_int = 0;
+    if (timer_create(CLOCK_REALTIME, &sev, &prof_timer) == -1)
+        return false;
+
+    have_prof_timer = true;
+#endif
+    return true;
+} /* init_profiling_timer() */
+
+/*-------------------------------------------------------------------------*/
 void
 handle_profiling_signal(int ignored)
 /* signal handler for the SIGPROF signal. Just sets a flag which is checked in
@@ -860,6 +893,9 @@ mark_start_evaluation (void)
 {
     // .it_interval is always zero (no auto-repeat), .it_value will be set later
     static struct itimerval prof_time_val = { {0,0}, {0,0} };
+#ifdef USE_POSIX_TIMERS
+    static struct itimerspec prof_ptime_val = { {0,0}, {0,0} };
+#endif
 
     total_evalcost = 0;
     eval_number++;
@@ -867,8 +903,24 @@ mark_start_evaluation (void)
     // start the profiling timer if enabled
     if (profiling_timevalue.tv_usec || profiling_timevalue.tv_sec)
     {
-        prof_time_val.it_value = profiling_timevalue;
-        setitimer(ITIMER_PROF, &prof_time_val, NULL);
+#ifdef USE_POSIX_TIMERS
+        if (have_prof_timer)
+        {
+            prof_ptime_val.it_value.tv_sec = profiling_timevalue.tv_sec;
+            prof_ptime_val.it_value.tv_nsec = profiling_timevalue.tv_usec * 1000L;
+            if (timer_settime(prof_timer, 0, &prof_ptime_val, NULL) == -1)
+            {
+                debug_message("%s Could not start execution timer: %s\n"
+                      , time_stamp(), strerror(errno));
+                have_prof_timer = false;
+            }
+        }
+        if (!have_prof_timer)
+#endif
+        {
+            prof_time_val.it_value = profiling_timevalue;
+            setitimer(ITIMER_PROF, &prof_time_val, NULL);
+        }
     }
 
     if (gettimeofday(&eval_begin, NULL))
@@ -892,10 +944,20 @@ mark_end_evaluation (void)
 
 {
     static struct itimerval prof_time_val = { {0,0}, {0,0} };
+#ifdef USE_POSIX_TIMERS
+    static struct itimerspec prof_ptime_val = { {0,0}, {0,0} };
+#endif
 
     // disable the profiling timer
     if (profiling_timevalue.tv_usec || profiling_timevalue.tv_sec)
+    {
+#ifdef USE_POSIX_TIMERS
+        if (have_prof_timer)
+            timer_settime(prof_timer, 0, &prof_ptime_val, NULL);
+        else
+#endif
         setitimer(ITIMER_PROF, &prof_time_val, NULL);
+    }
 
     if (total_evalcost == 0)
         return;
@@ -8157,7 +8219,7 @@ check_rtt_compatibility_inl(lpctype_t *formaltype, svalue_t *svp, lpctype_t **sv
                     {
                         *svptype = get_array_type(svpelement ? svpelement : lpctype_mixed);
                         free_lpctype(svpelement);
-                }
+                    }
 
                     return MY_FALSE; // No valid type found.
                 }
@@ -10116,6 +10178,11 @@ again:
         }
         traceing_recursion--;
     }
+
+#ifdef USE_PYTHON
+    if (current_prog != NULL)
+        python_call_instruction_hook(full_instr);
+#endif
 
     /* Test the evaluation cost.
      * eval_cost < 0 signify a wrap-around - unlikely, but with these crazy
@@ -13214,12 +13281,12 @@ again:
         TYPE_TEST_LEFT((sp-1), T_NUMBER);
         TYPE_TEST_RIGHT(sp, T_NUMBER);
         if (sp->u.number == 0)
-        {
             ERROR("Modulus by zero.\n");
-            break;
-        }
+        else if (sp->u.number == -1) // Shortcut, needed for sp[-1] == PINT_MIN
+            i = 0;
         else
             i = (sp-1)->u.number % sp->u.number;
+
         sp--;
         sp->u.number = i;
         break;
@@ -13972,7 +14039,6 @@ again:
         }
 #endif
 
-        TYPE_TEST_EXP_LEFT((sp-1), TF_NUMBER|TF_POINTER|TF_LPCTYPE);
         if ((sp-1)->type == T_NUMBER)
         {
             TYPE_TEST_RIGHT(sp, T_NUMBER);
@@ -13988,7 +14054,7 @@ again:
             sp--;
             sp->u.vec = join_array(sp->u.vec, (sp+1)->u.vec);
         }
-        else if (sp->type == T_LPCTYPE && (sp-1)->type == T_LPCTYPE)
+        else if ((sp-1)->type == T_LPCTYPE)
         {
             TYPE_TEST_RIGHT(sp, T_LPCTYPE);
             lpctype_t * result = get_union_type(sp[-1].u.lpctype, sp[0].u.lpctype);
@@ -13997,6 +14063,10 @@ again:
             free_lpctype(sp[0].u.lpctype);
             sp--;
             sp->u.lpctype = result;
+        }
+        else
+        {
+            OP_ARG_ERROR(1, TF_NUMBER|TF_POINTER|TF_LPCTYPE, sp-1);
         }
 
         break;
@@ -21626,27 +21696,10 @@ int_call_lambda (svalue_t *lsvp, int num_arg, bool external, svalue_t *bind_ob)
                 set_current_object(ob);
             }
 
-            if (i < CLOSURE_SIMUL_EFUN)
+            switch (i & -0x0800)
             {
-                /* It's an operator or efun */
-
-                if (i == CLOSURE_EFUN + F_UNDEF)
-                {
-                    /* The closure was discovered to be bound to a destructed
-                     * object and thus disabled.
-                     * This situation should no longer happen - in all situations
-                     * the closure should be zeroed out.
-                     */
-                    CLEAN_CSP
-                    pop_n_elems(num_arg);
-                    push_number(sp, 0);
-                    inter_sp = sp;
-                    return;
-                }
-
 #ifdef USE_PYTHON
-                if (i >= CLOSURE_PYTHON_EFUN && i < CLOSURE_EFUN)
-                {
+                case CLOSURE_PYTHON_EFUN:
                     inter_pc = csp->funstart = PYTHON_EFUN_FUNSTART;
                     csp->instruction = i - CLOSURE_PYTHON_EFUN;
                     csp->num_local_variables = 0;
@@ -21654,24 +21707,33 @@ int_call_lambda (svalue_t *lsvp, int num_arg, bool external, svalue_t *bind_ob)
                     call_python_efun(i - CLOSURE_PYTHON_EFUN, num_arg);
                     CLEAN_CSP
                     return;
-                }
 #endif
 
-                i -= CLOSURE_EFUN;
-                  /* Efuns have now a positive value, operators a negative one.
-                   */
-
-                if (i >= 0
-                 || instrs[i -= CLOSURE_OPERATOR-CLOSURE_EFUN].min_arg)
+                case CLOSURE_EFUN:
                 {
-                    /* To call an operator or efun, we have to construct
-                     * a small piece of program with this instruction.
-                     */
                     bytecode_t code[9];    /* the code fragment */
                     bytecode_p p;          /* the code pointer */
 
                     int min, max, def;
 
+                    i -= CLOSURE_EFUN;
+                    if (i == F_UNDEF)
+                    {
+                        /* The closure was discovered to be bound to a destructed
+                         * object and thus disabled.
+                         * This situation should no longer happen - in all situations
+                         * the closure should be zeroed out.
+                        */
+                        CLEAN_CSP
+                        pop_n_elems(num_arg);
+                        push_number(sp, 0);
+                        inter_sp = sp;
+                        return;
+                    }
+
+                    /* To call an efun, we have to construct a small piece
+                     * of program with this instruction.
+                     */
                     min = instrs[i].min_arg;
                     max = instrs[i].max_arg;
                     p = code;
@@ -21741,45 +21803,57 @@ int_call_lambda (svalue_t *lsvp, int num_arg, bool external, svalue_t *bind_ob)
                     /* The result is on the stack (inter_sp) */
                     return;
                 }
-                else
-                {
-                    /* It is an operator or syntactic marker: fall through
-                     * to uncallable closure type.
+
+                case CLOSURE_OPERATOR:
+                    /* It is an operator or syntactic marker.
                      */
+                    csp->extern_call = MY_TRUE;
+                    inter_pc = csp->funstart = EFUN_FUNSTART;
+                    csp->instruction = i - CLOSURE_OPERATOR;
                     break;
-                }
-            }
-            else
-            {
-                /* simul_efun */
-                object_t *ob;
 
-                /* Mark the call as sefun closure */
-                inter_pc = csp->funstart = SIMUL_EFUN_FUNSTART;
-
-                /* Get the simul_efun object */
-                if ( !(ob = simul_efun_object) )
+                case CLOSURE_SIMUL_EFUN:
                 {
-                    /* inter_sp == sp */
-                    if (!assert_simul_efun_object()
-                     || !(ob = simul_efun_object)
-                       )
+                    /* simul_efun */
+                    object_t *ob;
+
+                    /* Mark the call as sefun closure */
+                    inter_pc = csp->funstart = SIMUL_EFUN_FUNSTART;
+                    csp->instruction = i - CLOSURE_SIMUL_EFUN;
+
+                    /* Get the simul_efun object */
+                    if ( !(ob = simul_efun_object) )
                     {
-                        csp->extern_call = MY_TRUE;
-                        errorf("Couldn't load simul_efun object\n");
-                        /* NOTREACHED */
-                        return;
+                        /* inter_sp == sp */
+                        if (!assert_simul_efun_object()
+                         || !(ob = simul_efun_object)
+                           )
+                        {
+                            csp->extern_call = MY_TRUE;
+                            errorf("Couldn't load simul_efun object\n");
+                            /* NOTREACHED */
+                            return;
+                        }
                     }
+                    call_simul_efun(i - CLOSURE_SIMUL_EFUN, ob, num_arg);
+                    CLEAN_CSP
+
+                    /* The result is on the stack (inter_sp) */
+                    return;
                 }
-                call_simul_efun(i - CLOSURE_SIMUL_EFUN, ob, num_arg);
-                CLEAN_CSP
+
+                default:
+                    fatal("Invalid closure type: %d.\n",  lsvp->x.closure_type);
             }
-            /* The result is on the stack (inter_sp) */
-            return;
+            break;
         }
     }
 
-    CLEAN_CSP
+    /* We need to have at least one stack entry for error handling. */
+    if (csp > CONTROL_STACK)
+    {
+        CLEAN_CSP
+    }
     errorf("Uncallable closure\n");
     /* NOTREACHED */
     return;
@@ -22065,7 +22139,7 @@ warn_missing_function_lwob (lwobject_t* lwob, string_t* fun)
 
 /*-------------------------------------------------------------------------*/
 int
-get_line_number (bytecode_p p, program_t *progp, string_t **namep)
+get_line_number (bytecode_p p, program_t *progp, string_t **namep, string_t **fnamep)
 
 /* Look up the line number for address <p> within the program <progp>.
  * Result is the line number, and *<namep> is set to the name of the
@@ -22077,6 +22151,10 @@ get_line_number (bytecode_p p, program_t *progp, string_t **namep)
  *
  * In either case, the string returned in *<namep> has one reference
  * added.
+ *
+ * In fnamep (if != NULL) the original file name (either included file name
+ * or program name) will be returned not ref-counted. If no filename is found,
+ * it will be NULL.
  *
  * TODO: (an old comment which might no longer be true): This can be done
  * TODO:: much more efficiently, but that change has low priority.)
@@ -22105,6 +22183,8 @@ get_line_number (bytecode_p p, program_t *progp, string_t **namep)
     if (!progp || !p)
     {
         *namep = ref_mstring(STR_UNDEFINED);
+        if (fnamep)
+            *fnamep = NULL;
         return 0;
     }
 
@@ -22128,6 +22208,8 @@ get_line_number (bytecode_p p, program_t *progp, string_t **namep)
             if (!rc)
             {
                 *namep = ref_mstring(STR_UNDEFINED);
+                if (fnamep)
+                    *fnamep = NULL;
                 return 0;
             }
         }
@@ -22143,6 +22225,8 @@ get_line_number (bytecode_p p, program_t *progp, string_t **namep)
                       " in object %s\n",
                       time_stamp(), offset, get_txt(progp->name));
         *namep = ref_mstring(STR_UNDEFINED);
+        if (fnamep)
+            *fnamep = NULL;
         return 0;
     }
 
@@ -22294,6 +22378,8 @@ get_line_number (bytecode_p p, program_t *progp, string_t **namep)
             /* No memory for the new string - improvise */
             *namep = ref_mstring(inctop->name);
         }
+        if (fnamep)
+            *fnamep = inctop->name;
 
         /* Free the include stack structures */
         do {
@@ -22309,6 +22395,8 @@ get_line_number (bytecode_p p, program_t *progp, string_t **namep)
         /* Normal code */
 
         *namep = ref_mstring(progp->name);
+        if (fnamep)
+            *fnamep = progp->name;
     }
 
     if (used_system_mem)
@@ -22413,7 +22501,7 @@ get_line_number_if_any (string_t **name)
             free_mstring(location);
             return inter_pc - csp->funstart - 2;
         }
-        return get_line_number(inter_pc, current_prog, name);
+        return get_line_number(inter_pc, current_prog, name, NULL);
     }
   
     *name = ref_mstring(STR_EMPTY);
@@ -22750,7 +22838,7 @@ not_catch:  /* The frame does not point at a catch here */
         /* Nothing of the above: a normal program */
         if (file)
             free_mstring(file);
-        line = get_line_number(dump_pc, prog, &file);
+        line = get_line_number(dump_pc, prog, &file, NULL);
         name = prog->function_headers[FUNCTION_HEADER_INDEX(p[0].funstart)].name;
 
 name_computed: /* Jump target from the catch detection */
@@ -23252,7 +23340,7 @@ last_instructions (int length, Bool verbose, svalue_t **svpp)
                 }
                 else
                 {
-                    line = get_line_number(ppc, ppr, &file);
+                    line = get_line_number(ppc, ppr, &file, NULL);
                 }
 
                 if (!object_svalue_eq(previous_objects[i], old_obj)
@@ -23377,6 +23465,14 @@ int control_stack_depth (void)
 {
     return (csp - CONTROL_STACK) + 1; 
 } /* control_stack_depth() */
+
+/*-------------------------------------------------------------------------*/
+struct control_stack* control_stack_start (void)
+  /* Returns the outermost stack entry.
+   */
+{
+    return CONTROL_STACK;
+} /* control_stack_start() */
 
 /*-------------------------------------------------------------------------*/
 static INLINE int

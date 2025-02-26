@@ -168,6 +168,19 @@ enum visibility
     VISIBILITY_COUNT
 };
 
+enum call_frame_type
+{
+    CALL_FRAME_TYPE_LFUN,
+    CALL_FRAME_TYPE_ALIEN_LFUN_CLOSURE,
+    CALL_FRAME_TYPE_EFUN_CLOSURE,
+    CALL_FRAME_TYPE_PYTHON_EFUN_CLOSURE,
+    CALL_FRAME_TYPE_SIMUL_EFUN_CLOSURE,
+    CALL_FRAME_TYPE_CATCH,
+    CALL_FRAME_TYPE_LAMBDA,
+
+    CALL_FRAME_TYPE_COUNT
+};
+
 /* --- Type definitions --- */
 struct python_efun_info_s
 {
@@ -313,6 +326,7 @@ static const char* python_hook_names[] = {
     "ON_SIGHUP",
     "ON_SIGUSR1",
     "ON_SIGUSR2",
+    "BEFORE_INSTRUCTION",
 };
 
 static const char* lfun_flag_names[] = {
@@ -341,6 +355,16 @@ static const char* visibility_names[] = {
     "VIS_PUBLIC",
 };
 
+static const char* call_frame_type_names[] = {
+    "CALL_FRAME_TYPE_LFUN",
+    "CALL_FRAME_TYPE_ALIEN_LFUN_CLOSURE",
+    "CALL_FRAME_TYPE_EFUN_CLOSURE",
+    "CALL_FRAME_TYPE_PYTHON_EFUN_CLOSURE",
+    "CALL_FRAME_TYPE_SIMUL_EFUN_CLOSURE",
+    "CALL_FRAME_TYPE_CATCH",
+    "CALL_FRAME_TYPE_LAMBDA",
+};
+
 static ldmud_gc_var_t *gc_object_list = NULL,
                       *gc_lwobject_list = NULL,
                       *gc_program_list = NULL,
@@ -352,7 +376,8 @@ static ldmud_gc_var_t *gc_object_list = NULL,
                       *gc_coroutine_list = NULL,
                       *gc_symbol_list = NULL,
                       *gc_quoted_array_list = NULL,
-                      *gc_lvalue_list = NULL;
+                      *gc_lvalue_list = NULL,
+                      *gc_call_frame_list = NULL;
 static ldmud_gc_lpctype_type_t *gc_lpctype_list = NULL;
 static ldmud_concrete_struct_type_t *gc_struct_type_list = NULL;
 
@@ -1389,6 +1414,23 @@ struct ldmud_lvalue_s
     svalue_t lpc_lvalue;        /* Can be T_INVALID. */
 };
 
+struct ldmud_instruction_s
+{
+    int full_instr;
+};
+
+struct ldmud_call_frame_s
+{
+    PyGCObject_HEAD
+
+    svalue_t ob;
+    program_t *prog;
+    bytecode_t *pc;
+    const char* name;
+    enum call_frame_type type;
+    int32 eval_cost;
+};
+
 typedef struct ldmud_lpctype_s ldmud_lpctype_t;
 typedef struct ldmud_concrete_array_type_s ldmud_concrete_array_type_t;
 typedef struct ldmud_array_s ldmud_array_t;
@@ -1405,6 +1447,8 @@ typedef struct ldmud_program_lfun_argument_s ldmud_program_lfun_argument_t;
 typedef struct ldmud_symbol_s ldmud_symbol_t;
 typedef struct ldmud_quoted_array_s ldmud_quoted_array_t;
 typedef struct ldmud_lvalue_s ldmud_lvalue_t;
+typedef struct ldmud_instruction_s ldmud_instruction_t;
+typedef struct ldmud_call_frame_s ldmud_call_frame_t;
 
 /*-------------------------------------------------------------------------*/
 /* GC Support */
@@ -1829,6 +1873,8 @@ ldmud_lpctype_type_dealloc (ldmud_gc_lpctype_type_t* self)
 
     remove_gc_lpctype_object(self);
 
+    if (Py_TYPE(self)->tp_flags & Py_TPFLAGS_HAVE_GC)
+        PyObject_GC_UnTrack(self);
     Py_XDECREF(self->ldmud_lpctype.type_base.tp_base);
     Py_XDECREF(self->ldmud_lpctype.type_base.tp_dict);
     Py_XDECREF(self->ldmud_lpctype.type_base.tp_bases);
@@ -2128,6 +2174,8 @@ ldmud_concrete_array_type_dealloc (ldmud_concrete_array_type_t* self)
  */
 
 {
+    if (Py_TYPE(self)->tp_flags & Py_TPFLAGS_HAVE_GC)
+        PyObject_GC_UnTrack(self);
     Py_XDECREF(self->element_type);
     Py_XDECREF(self->ldmud_lpctype.type_base.tp_base);
     Py_XDECREF(self->ldmud_lpctype.type_base.tp_dict);
@@ -2400,6 +2448,8 @@ ldmud_concrete_struct_type_dealloc (ldmud_concrete_struct_type_t* self)
     free_struct_name(self->name);
     REMOVE_GC_OBJECT(gc_struct_type_list, self);
 
+    if (Py_TYPE(self)->tp_flags & Py_TPFLAGS_HAVE_GC)
+        PyObject_GC_UnTrack(self);
     Py_XDECREF(self->ldmud_lpctype.type_base.tp_base);
     Py_XDECREF(self->ldmud_lpctype.type_base.tp_dict);
     Py_XDECREF(self->ldmud_lpctype.type_base.tp_bases);
@@ -3735,7 +3785,7 @@ ldmud_program_lfun_call (ldmud_program_and_index_t *lfun, PyObject *arg, PyObjec
             if (err != NULL)
             {
                 PyErr_SetString(PyExc_ValueError, err);
-                pop_n_elems(i, sp);
+                pop_n_elems(i, sp-1);
                 return NULL;
             }
         }
@@ -3932,8 +3982,7 @@ ldmud_program_lfun_get_file_name (ldmud_program_and_index_t *lfun, void *closure
     program_t *progp;
     int fx;
     bytecode_p funstart;
-    string_t *name;
-    PyObject* result;
+    string_t *name, *fname;
 
     if (!ldmud_program_check_available(&lfun->ob_base))
         return NULL;
@@ -3946,17 +3995,15 @@ ldmud_program_lfun_get_file_name (ldmud_program_and_index_t *lfun, void *closure
         return Py_None;
     }
 
-    get_line_number(funstart, progp, &name);
-    if (name == STR_UNDEFINED)
+    get_line_number(funstart, progp, &name, &fname);
+    free_mstring(name);
+    if (fname == NULL)
     {
-        free_mstring(name);
         Py_INCREF(Py_None);
         return Py_None;
     }
 
-    result = PyUnicode_FromFormat("/%s", get_txt(name));
-    free_mstring(name);
-    return result;
+    return PyUnicode_FromFormat("/%s", get_txt(fname));
 } /* ldmud_program_lfun_get_file_name() */
 
 /*-------------------------------------------------------------------------*/
@@ -3983,7 +4030,7 @@ ldmud_program_lfun_get_line_number (ldmud_program_and_index_t *lfun, void *closu
         return Py_None;
     }
 
-    pos = get_line_number(funstart, progp, &name);
+    pos = get_line_number(funstart, progp, &name, NULL);
     free_mstring(name);
 
     if (pos == 0)
@@ -8405,6 +8452,22 @@ static ldmud_lpctype_t ldmud_struct_type =
 },  ldmud_struct_get_lpctype            /* get_lpctype */
 };
 
+/*-------------------------------------------------------------------------*/
+static PyObject*
+ldmud_struct_create (struct_t* st)
+
+/* Creates a new Python struct from an LPC struct.
+ */
+
+{
+    PyObject* val = ldmud_struct_new(&ldmud_struct_type.type_base, NULL, NULL);
+    if (val != NULL)
+        ((ldmud_struct_t*)val)->lpc_struct = ref_struct(st);
+
+    return val;
+} /* ldmud_struct_create() */
+
+/*-------------------------------------------------------------------------*/
 static PyObject*
 ldmud_concrete_struct_new (PyTypeObject *type, PyObject *args, PyObject *kwds)
 
@@ -8788,7 +8851,7 @@ ldmud_closure_call (ldmud_closure_t *cl, PyObject *arg, PyObject *kw)
             if (err != NULL)
             {
                 PyErr_SetString(PyExc_ValueError, err);
-                pop_n_elems(i, sp);
+                pop_n_elems(i, sp-1);
                 return NULL;
             }
         }
@@ -9376,7 +9439,7 @@ ldmud_coroutine_get_file_name (ldmud_coroutine_t *val, void *closure)
 
 {
     string_t * name;
-    PyObject * result;
+    string_t * fname;
 
     if(!val->lpc_coroutine || !val->lpc_coroutine->prog)
     {
@@ -9384,17 +9447,15 @@ ldmud_coroutine_get_file_name (ldmud_coroutine_t *val, void *closure)
         return Py_None;
     }
 
-    get_line_number(val->lpc_coroutine->pc, val->lpc_coroutine->prog, &name);
-    if (name == STR_UNDEFINED)
+    get_line_number(val->lpc_coroutine->pc, val->lpc_coroutine->prog, &name, &fname);
+    free_mstring(name);
+    if (fname == NULL)
     {
-        free_mstring(name);
         Py_INCREF(Py_None);
         return Py_None;
     }
 
-    result = PyUnicode_FromFormat("/%s", get_txt(name));
-    free_mstring(name);
-    return result;
+    return PyUnicode_FromFormat("/%s", get_txt(fname));
 } /* ldmud_coroutine_get_file_name() */
 
 /*-------------------------------------------------------------------------*/
@@ -9414,7 +9475,7 @@ ldmud_coroutine_get_line_number (ldmud_coroutine_t *val, void *closure)
         return Py_None;
     }
 
-    pos = get_line_number(val->lpc_coroutine->pc, val->lpc_coroutine->prog, &name);
+    pos = get_line_number(val->lpc_coroutine->pc, val->lpc_coroutine->prog, &name, NULL);
     free_mstring(name);
 
     if (pos == 0)
@@ -11493,6 +11554,331 @@ static ldmud_lpctype_t ldmud_void_type =
 };
 
 /*-------------------------------------------------------------------------*/
+/* Instruction */
+
+/*-------------------------------------------------------------------------*/
+
+static void
+ldmud_instruction_dealloc (ldmud_instruction_t* self)
+
+/* Destroy the ldmud_instruction_t object
+ */
+
+{
+    Py_TYPE(self)->tp_free((PyObject*)self);
+} /* ldmud_instruction_dealloc() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_instruction_get_name (ldmud_instruction_t *instr, void *closure)
+
+/* Returns the name of this instruction.
+ */
+
+{
+    return PyUnicode_FromString(get_f_name(instr->full_instr));
+} /* ldmud_instruction_get_name() */
+
+/*-------------------------------------------------------------------------*/
+static PyGetSetDef ldmud_instruction_getset[] =
+{
+    {"name",             (getter)ldmud_instruction_get_name,         NULL, NULL},
+    {NULL}
+};
+
+static PyTypeObject ldmud_instruction_type =
+{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "ldmud.Instruction",                /* tp_name */
+    sizeof(ldmud_instruction_t),        /* tp_basicsize */
+    0,                                  /* tp_itemsize */
+    (destructor)ldmud_instruction_dealloc, /* tp_dealloc */
+    0,                                  /* tp_print */
+    0,                                  /* tp_getattr */
+    0,                                  /* tp_setattr */
+    0,                                  /* tp_reserved */
+    0,                                  /* tp_repr */
+    0,                                  /* tp_as_number */
+    0,                                  /* tp_as_sequence */
+    0,                                  /* tp_as_mapping */
+    0,                                  /* tp_hash  */
+    0,                                  /* tp_call */
+    0,                                  /* tp_str */
+    0,                                  /* tp_getattro */
+    0,                                  /* tp_setattro */
+    0,                                  /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,                 /* tp_flags */
+    "LPC instruction information",      /* tp_doc */
+    0,                                  /* tp_traverse */
+    0,                                  /* tp_clear */
+    0,                                  /* tp_richcompare */
+    0,                                  /* tp_weaklistoffset */
+    0,                                  /* tp_iter */
+    0,                                  /* tp_iternext */
+    0,                                  /* tp_methods */
+    0,                                  /* tp_members */
+    ldmud_instruction_getset,           /* tp_getset */
+    0,                                  /* tp_base */
+    0,                                  /* tp_dict */
+    0,                                  /* tp_descr_get */
+    0,                                  /* tp_descr_set */
+    0,                                  /* tp_dictoffset */
+    0,                                  /* tp_init */
+    0,                                  /* tp_alloc */
+    0,                                  /* tp_new */
+};
+
+/*-------------------------------------------------------------------------*/
+
+static PyObject*
+ldmud_instruction_create (int instruction)
+
+/* Create Python object that represents an instruction.
+ */
+
+{
+    ldmud_instruction_t *result;
+
+    result = (ldmud_instruction_t*) ldmud_instruction_type.tp_alloc(&ldmud_instruction_type, 0);
+    if (result == NULL)
+        return NULL;
+
+    result->full_instr = instruction;
+
+    return (PyObject*)result;
+} /* ldmud_instruction_create() */
+
+/*-------------------------------------------------------------------------*/
+/* Call Stack Frame */
+
+/*-------------------------------------------------------------------------*/
+
+static void
+ldmud_call_frame_dealloc (ldmud_call_frame_t* self)
+
+/* Destroy the ldmud_call_frame_t object
+ */
+
+{
+    free_svalue(&self->ob);
+    free_prog(self->prog, true);
+
+    remove_gc_object(&gc_call_frame_list, (ldmud_gc_var_t*)self);
+
+    Py_TYPE(self)->tp_free((PyObject*)self);
+} /* ldmud_call_frame_dealloc() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_call_frame_get_type (ldmud_call_frame_t *frame, void *closure)
+
+/* Returns the type of this call_frame.
+ */
+
+{
+    return PyLong_FromLong(frame->type);
+} /* ldmud_call_frame_get_type() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_call_frame_get_name (ldmud_call_frame_t *frame, void *closure)
+
+/* Returns a name for this call frame. This is for
+ *  - CALL_FRAME_TYPE_LFUN:                The name of the lfun
+ *  - CALL_FRAME_TYPE_EFUN_CLOSURE:        The name of the efun or instruction
+ *  - CALL_FRAME_TYPE_PYTHON_EFUN_CLOSURE: The name of the Python efun
+ *  - CALL_FRAME_TYPE_SIMUL_EFUN_CLOSURE:  The name of the simul-efun.
+ *  - CALL_FRAME_TYPE_CATCH:               "catch"
+ *  - CALL_FRAME_TYPE_LAMBDA:              None
+ */
+
+{
+    if (frame->name == NULL)
+    {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+    else
+        return PyUnicode_FromString(frame->name);
+} /* ldmud_call_frame_get_name() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_call_frame_get_object (ldmud_call_frame_t *frame, void *closure)
+
+/* Returns the object for this call frame.
+ */
+
+{
+    return svalue_to_python(&(frame->ob));
+} /* ldmud_call_frame_get_object() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_call_frame_get_program_name (ldmud_call_frame_t *frame, void *closure)
+
+/* Returns the name of the program for this call frame.
+ */
+
+{
+    return PyUnicode_FromFormat("/%s", get_txt(frame->prog->name));
+} /* ldmud_call_frame_get_program_name() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_call_frame_get_file_name (ldmud_call_frame_t *frame, void *closure)
+
+/* Returns the name of the source file for this call frame.
+ */
+
+{
+    string_t *name, *fname;
+
+    if (frame->pc < frame->prog->program || frame->pc >= PROGRAM_END(*frame->prog))
+    {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+
+    get_line_number(frame->pc, frame->prog, &name, &fname);
+    free_mstring(name);
+
+    if (fname == NULL)
+    {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+
+    if (get_txt(fname)[0] == '/')
+        return PyUnicode_FromStringAndSize(get_txt(fname), mstrsize(fname));
+    else
+        return PyUnicode_FromFormat("/%s", get_txt(fname));
+} /* ldmud_call_frame_get_file_name() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_call_frame_get_line_number (ldmud_call_frame_t *frame, void *closure)
+
+/* Returns the source line for this call frame.
+ */
+
+{
+    string_t *name;
+    int pos;
+
+    if (frame->pc < frame->prog->program || frame->pc >= PROGRAM_END(*frame->prog))
+    {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+
+    pos = get_line_number(frame->pc, frame->prog, &name, NULL);
+    free_mstring(name);
+
+    if (pos == 0)
+    {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+
+    return PyLong_FromLong(pos);
+} /* ldmud_call_frame_get_line_number() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_call_frame_get_eval_cost (ldmud_call_frame_t *frame, void *closure)
+
+/* Returns the current evaluation cost for this call frame.
+ */
+
+{
+    return PyLong_FromLong(frame->eval_cost);
+} /* ldmud_call_frame_get_eval_cost() */
+
+/*-------------------------------------------------------------------------*/
+static PyGetSetDef ldmud_call_frame_getset[] =
+{
+    {"type",             (getter)ldmud_call_frame_get_type,         NULL, NULL},
+    {"name",             (getter)ldmud_call_frame_get_name,         NULL, NULL},
+    {"object",           (getter)ldmud_call_frame_get_object,       NULL, NULL},
+    {"program_name",     (getter)ldmud_call_frame_get_program_name, NULL, NULL},
+    {"file_name",        (getter)ldmud_call_frame_get_file_name,    NULL, NULL},
+    {"line_number",      (getter)ldmud_call_frame_get_line_number,  NULL, NULL},
+    {"eval_cost",        (getter)ldmud_call_frame_get_eval_cost,    NULL, NULL},
+    {NULL}
+};
+
+static PyTypeObject ldmud_call_frame_type =
+{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "ldmud.CallFrame",                  /* tp_name */
+    sizeof(ldmud_call_frame_t),         /* tp_basicsize */
+    0,                                  /* tp_itemsize */
+    (destructor)ldmud_call_frame_dealloc, /* tp_dealloc */
+    0,                                  /* tp_print */
+    0,                                  /* tp_getattr */
+    0,                                  /* tp_setattr */
+    0,                                  /* tp_reserved */
+    0,                                  /* tp_repr */
+    0,                                  /* tp_as_number */
+    0,                                  /* tp_as_sequence */
+    0,                                  /* tp_as_mapping */
+    0,                                  /* tp_hash  */
+    0,                                  /* tp_call */
+    0,                                  /* tp_str */
+    0,                                  /* tp_getattro */
+    0,                                  /* tp_setattro */
+    0,                                  /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,                 /* tp_flags */
+    "LPC call stack frame",             /* tp_doc */
+    0,                                  /* tp_traverse */
+    0,                                  /* tp_clear */
+    0,                                  /* tp_richcompare */
+    0,                                  /* tp_weaklistoffset */
+    0,                                  /* tp_iter */
+    0,                                  /* tp_iternext */
+    0,                                  /* tp_methods */
+    0,                                  /* tp_members */
+    ldmud_call_frame_getset,            /* tp_getset */
+    0,                                  /* tp_base */
+    0,                                  /* tp_dict */
+    0,                                  /* tp_descr_get */
+    0,                                  /* tp_descr_set */
+    0,                                  /* tp_dictoffset */
+    0,                                  /* tp_init */
+    0,                                  /* tp_alloc */
+    0,                                  /* tp_new */
+};
+
+/*-------------------------------------------------------------------------*/
+
+static PyObject*
+ldmud_call_frame_create (enum call_frame_type type, svalue_t ob, program_t *prog, bytecode_t *pc, const char* name, int32 frame_eval_cost)
+
+/* Create Python object that represents an instruction.
+ */
+
+{
+    ldmud_call_frame_t *result;
+
+    result = (ldmud_call_frame_t*) ldmud_call_frame_type.tp_alloc(&ldmud_call_frame_type, 0);
+    if (result == NULL)
+        return NULL;
+
+    reference_prog(prog, "ldmud_call_frame_create");
+    assign_svalue_no_free(&(result->ob), &ob);
+    result->type = type;
+    result->prog = prog;
+    result->pc = pc;
+    result->name = name;
+    result->eval_cost = frame_eval_cost;
+
+    add_gc_object(&gc_call_frame_list, (ldmud_gc_var_t*)result);
+
+    return (PyObject*)result;
+} /* ldmud_call_frame_create() */
+
+/*-------------------------------------------------------------------------*/
 /* Interrupt exception */
 
 static PyTypeObject ldmud_interrupt_exception_type =
@@ -11644,7 +12030,7 @@ ldmud_efun_call (ldmud_efun_t *func, PyObject *arg, PyObject *kw)
             if (err != NULL)
             {
                 PyErr_SetString(PyExc_ValueError, err);
-                pop_n_elems(i, sp);
+                pop_n_elems(i, sp-1);
                 return NULL;
             }
         }
@@ -11812,6 +12198,515 @@ create_efun_namespace ()
 
     return (PyObject*)&ldmud_efun_namespace;
 } /* create_efun_namespace() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject*
+ldmud_registered_efuns_getattro (PyObject *val, PyObject *name)
+
+/* Return the callable for a registered efun.
+ */
+
+{
+    PyObject *result;
+    bool error;
+    string_t* efunname;
+    ident_t *ident;
+
+    /* First check real attributes... */
+    result = PyObject_GenericGetAttr(val, name);
+    if (result || !PyErr_ExceptionMatches(PyExc_AttributeError))
+        return result;
+
+    PyErr_Clear();
+
+    /* And now look up registered efuns. */
+    efunname = find_tabled_python_string(name, "efun name", &error);
+    if (error)
+        return NULL;
+
+    if (efunname)
+    {
+        ident = find_shared_identifier_mstr(efunname, I_TYPE_GLOBAL, 0);
+        while (ident && ident->type != I_TYPE_GLOBAL)
+            ident = ident->inferior;
+
+        if (ident && ident->type == I_TYPE_GLOBAL && ident->u.global.python_efun != I_GLOBAL_PYTHON_EFUN_OTHER)
+        {
+            result = python_efun_table[ident->u.global.python_efun].callable;
+            if (result)
+            {
+                Py_INCREF(result);
+                return result;
+            }
+        }
+    }
+
+    PyErr_Format(PyExc_AttributeError, "No such registered efun: '%U'", name);
+    return NULL;
+} /* ldmud_registered_efuns_getattro() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_registered_efuns_dir (PyObject *self)
+
+/* Returns a list of all attributes, this includes all registered efun names.
+ */
+
+{
+    PyObject *result;
+    PyObject *attrs = get_class_dir(self);
+
+    if (attrs == NULL)
+        return NULL;
+
+    /* Now add all registered efuns. */
+    for (ident_t *ident = all_python_efuns; ident; ident = ident->next_all)
+    {
+        if (python_efun_table[ident->u.global.python_efun].callable != NULL)
+        {
+            PyObject *efunname = PyUnicode_FromStringAndSize(get_txt(ident->name), mstrsize(ident->name));
+
+            if (efunname == NULL)
+            {
+                PyErr_Clear();
+                continue;
+            }
+
+            if (PySet_Add(attrs, efunname) < 0)
+                PyErr_Clear();
+            Py_DECREF(efunname);
+        }
+    }
+
+    /* And return the keys of our dict. */
+    result = PySequence_List(attrs);
+    Py_DECREF(attrs);
+    return result;
+} /* ldmud_registered_efuns_dir() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_registered_efuns_dict (ldmud_program_t *self, void *closure)
+
+/* Returns a list of all registered efuns.
+ */
+
+{
+    PyObject *result, *dict = PyDict_New();
+    if (!dict)
+        return NULL;
+
+    for (ident_t *ident = all_python_efuns; ident; ident = ident->next_all)
+    {
+        PyObject * callable = python_efun_table[ident->u.global.python_efun].callable;
+        if (callable != NULL)
+        {
+            PyObject *efunname = PyUnicode_FromStringAndSize(get_txt(ident->name), mstrsize(ident->name));
+
+            if (efunname == NULL)
+            {
+                PyErr_Clear();
+                continue;
+            }
+
+            if (PyDict_SetItem(dict, efunname, callable) < 0)
+                PyErr_Clear();
+            Py_DECREF(efunname);
+        }
+    }
+
+    result = PyDictProxy_New(dict);
+    Py_DECREF(dict);
+    return result;
+} /* ldmud_registered_efuns_dict() */
+
+/*-------------------------------------------------------------------------*/
+static PyMethodDef ldmud_registered_efuns_methods[] =
+{
+    {
+        "__dir__",
+        (PyCFunction)ldmud_registered_efuns_dir, METH_NOARGS,
+        "__dir__() -> List\n\n"
+        "Returns a list of all attributes."
+    },
+
+    {NULL}
+};
+
+static PyGetSetDef ldmud_registered_efuns_getset [] = {
+    {"__dict__", (getter)ldmud_registered_efuns_dict, NULL, NULL},
+    {NULL}
+};
+
+static PyTypeObject ldmud_registered_efuns_type =
+{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "ldmud.registered_efuns",           /* tp_name */
+    0,                                  /* tp_basicsize */
+    0,                                  /* tp_itemsize */
+    0,                                  /* tp_dealloc */
+    0,                                  /* tp_print */
+    0,                                  /* tp_getattr */
+    0,                                  /* tp_setattr */
+    0,                                  /* tp_reserved */
+    0,                                  /* tp_repr */
+    0,                                  /* tp_as_number */
+    0,                                  /* tp_as_sequence */
+    0,                                  /* tp_as_mapping */
+    0,                                  /* tp_hash  */
+    0,                                  /* tp_call */
+    0,                                  /* tp_str */
+    ldmud_registered_efuns_getattro,    /* tp_getattro */
+    0,                                  /* tp_setattro */
+    0,                                  /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,                 /* tp_flags */
+    "Registered Python efuns",          /* tp_doc */
+    0,                                  /* tp_traverse */
+    0,                                  /* tp_clear */
+    0,                                  /* tp_richcompare */
+    0,                                  /* tp_weaklistoffset */
+    0,                                  /* tp_iter */
+    0,                                  /* tp_iternext */
+    ldmud_registered_efuns_methods,     /* tp_methods */
+    0,                                  /* tp_members */
+    ldmud_registered_efuns_getset,      /* tp_getset */
+};
+
+/*-------------------------------------------------------------------------*/
+static PyObject*
+ldmud_registered_types_getattro (PyObject *val, PyObject *name)
+
+/* Return the class for a registered type.
+ */
+
+{
+    PyObject *result;
+    bool error;
+    string_t* typename;
+    ident_t *ident;
+
+    /* First check real attributes... */
+    result = PyObject_GenericGetAttr(val, name);
+    if (result || !PyErr_ExceptionMatches(PyExc_AttributeError))
+        return result;
+
+    PyErr_Clear();
+
+    /* And now look up registered types. */
+    typename = find_tabled_python_string(name, "type name", &error);
+    if (error)
+        return NULL;
+
+    if (typename)
+    {
+        ident = find_shared_identifier_mstr(typename, I_TYPE_PYTHON_TYPE, 0);
+        while (ident && ident->type != I_TYPE_PYTHON_TYPE)
+            ident = ident->inferior;
+
+        if (ident && ident->type == I_TYPE_PYTHON_TYPE)
+        {
+            result = python_type_table[ident->u.python_type_id]->pytype;
+            if (result)
+            {
+                Py_INCREF(result);
+                return result;
+            }
+        }
+    }
+
+    PyErr_Format(PyExc_AttributeError, "No such registered type: '%U'", name);
+    return NULL;
+} /* ldmud_registered_types_getattro() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_registered_types_dir (PyObject *self)
+
+/* Returns a list of all attributes, this includes all registered type names.
+ */
+
+{
+    PyObject *result;
+    PyObject *attrs = get_class_dir(self);
+
+    if (attrs == NULL)
+        return NULL;
+
+    /* Now add all registered types. */
+    for (ident_t *ident = all_python_types; ident; ident = ident->next_all)
+    {
+        if (python_type_table[ident->u.python_type_id]->pytype != NULL)
+        {
+            PyObject *typename = PyUnicode_FromStringAndSize(get_txt(ident->name), mstrsize(ident->name));
+
+            if (typename == NULL)
+            {
+                PyErr_Clear();
+                continue;
+            }
+
+            if (PySet_Add(attrs, typename) < 0)
+                PyErr_Clear();
+            Py_DECREF(typename);
+        }
+    }
+
+    /* And return the keys of our dict. */
+    result = PySequence_List(attrs);
+    Py_DECREF(attrs);
+    return result;
+} /* ldmud_registered_types_dir() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject *
+ldmud_registered_types_dict (ldmud_program_t *self, void *closure)
+
+/* Returns a list of all registered types.
+ */
+
+{
+    PyObject *result, *dict = PyDict_New();
+    if (!dict)
+        return NULL;
+
+    for (ident_t *ident = all_python_types; ident; ident = ident->next_all)
+    {
+        PyObject *type = python_type_table[ident->u.python_type_id]->pytype;
+        if (type != NULL)
+        {
+            PyObject *typename = PyUnicode_FromStringAndSize(get_txt(ident->name), mstrsize(ident->name));
+
+            if (typename == NULL)
+            {
+                PyErr_Clear();
+                continue;
+            }
+
+            if (PyDict_SetItem(dict, typename, type) < 0)
+                PyErr_Clear();
+            Py_DECREF(typename);
+        }
+    }
+
+    result = PyDictProxy_New(dict);
+    Py_DECREF(dict);
+    return result;
+} /* ldmud_registered_types_dict() */
+
+/*-------------------------------------------------------------------------*/
+static PyMethodDef ldmud_registered_types_methods[] =
+{
+    {
+        "__dir__",
+        (PyCFunction)ldmud_registered_types_dir, METH_NOARGS,
+        "__dir__() -> List\n\n"
+        "Returns a list of all attributes."
+    },
+
+    {NULL}
+};
+
+static PyGetSetDef ldmud_registered_types_getset [] = {
+    {"__dict__", (getter)ldmud_registered_types_dict, NULL, NULL},
+    {NULL}
+};
+
+static PyTypeObject ldmud_registered_types_type =
+{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "ldmud.registered_types",           /* tp_name */
+    0,                                  /* tp_basicsize */
+    0,                                  /* tp_itemsize */
+    0,                                  /* tp_dealloc */
+    0,                                  /* tp_print */
+    0,                                  /* tp_getattr */
+    0,                                  /* tp_setattr */
+    0,                                  /* tp_reserved */
+    0,                                  /* tp_repr */
+    0,                                  /* tp_as_number */
+    0,                                  /* tp_as_sequence */
+    0,                                  /* tp_as_mapping */
+    0,                                  /* tp_hash  */
+    0,                                  /* tp_call */
+    0,                                  /* tp_str */
+    ldmud_registered_types_getattro,    /* tp_getattro */
+    0,                                  /* tp_setattro */
+    0,                                  /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,                 /* tp_flags */
+    "Registered Python types",          /* tp_doc */
+    0,                                  /* tp_traverse */
+    0,                                  /* tp_clear */
+    0,                                  /* tp_richcompare */
+    0,                                  /* tp_weaklistoffset */
+    0,                                  /* tp_iter */
+    0,                                  /* tp_iternext */
+    ldmud_registered_types_methods,     /* tp_methods */
+    0,                                  /* tp_members */
+    ldmud_registered_types_getset,      /* tp_getset */
+};
+
+/*-------------------------------------------------------------------------*/
+static Py_ssize_t
+ldmud_call_stack_length (PyObject *stack)
+
+/* Implement len() for the stack.
+ */
+
+{
+    return control_stack_depth();
+} /* ldmud_call_stack_length() */
+
+/*-------------------------------------------------------------------------*/
+static PyObject*
+ldmud_call_stack_item (PyObject *stack, Py_ssize_t idx)
+
+/* Implement item access for the stack.
+ */
+
+{
+    struct control_stack *frame;
+    bytecode_p            frame_pc;
+    program_t            *frame_prog;
+    svalue_t              frame_ob;
+    const char           *frame_name;
+    enum call_frame_type  frame_type;
+#ifdef EVAL_COST_TRACE
+    int32                 frame_eval_cost;
+#endif
+
+    if (idx < 0 || idx >= control_stack_depth())
+    {
+        PyErr_SetString(PyExc_IndexError, "index out of range");
+        return NULL;
+    }
+
+    frame = control_stack_start() + idx;
+
+    /* The stack stores the previous pc and prog.
+     * For current value look up the global variables.
+     */
+    if (frame == csp)
+    {
+        frame_pc = inter_pc;
+        frame_prog = current_prog;
+#ifdef EVAL_COST_TRACE
+        frame_eval_cost = eval_cost;
+#endif
+        frame_ob = current_object;
+    }
+    else
+    {
+        struct control_stack *next = frame + 1;
+        frame_pc = next->pc;
+        frame_prog = next->prog;
+#ifdef EVAL_COST_TRACE
+        frame_eval_cost = next->eval_cost;
+#endif
+        /* The current object is stored in the next extern call frame. */
+        while (true)
+        {
+            if (next > csp)
+                frame_ob = current_object;
+            else if (next->extern_call)
+                frame_ob = next->ob;
+            else
+            {
+                next++;
+                continue;
+            }
+            break;
+        }
+    }
+
+    assert(frame_prog != NULL);
+    assert(frame_ob.type != T_NUMBER);
+
+    if (frame->catch_call)
+    {
+        frame_type = CALL_FRAME_TYPE_CATCH;
+        frame_name = "catch";
+    }
+    else if (frame_pc == NULL)
+    {
+        frame_type = CALL_FRAME_TYPE_ALIEN_LFUN_CLOSURE;
+        frame_name = NULL;
+    }
+    else  if (frame->funstart == SIMUL_EFUN_FUNSTART)
+    {
+        frame_type = CALL_FRAME_TYPE_SIMUL_EFUN_CLOSURE;
+        frame_name = get_txt(simul_efun_table[frame->instruction].function.name);
+    }
+    else  if (frame->funstart == EFUN_FUNSTART)
+    {
+        frame_type = CALL_FRAME_TYPE_EFUN_CLOSURE;
+        frame_name = instrs[frame->instruction].name;
+    }
+    else  if (frame->funstart == PYTHON_EFUN_FUNSTART)
+    {
+        frame_type = CALL_FRAME_TYPE_PYTHON_EFUN_CLOSURE;
+        frame_name = closure_python_efun_to_string(frame->instruction + CLOSURE_PYTHON_EFUN);
+    }
+    else if (frame->funstart < frame_prog->program || frame->funstart > PROGRAM_END(*frame_prog))
+    {
+        frame_type = CALL_FRAME_TYPE_LAMBDA;
+        frame_name = NULL;
+    }
+    else
+    {
+        frame_type = CALL_FRAME_TYPE_LFUN;
+        frame_name = get_txt(frame_prog->function_headers[FUNCTION_HEADER_INDEX(frame->funstart)].name);
+    }
+
+    return ldmud_call_frame_create(frame_type, frame_ob, frame_prog, frame_pc, frame_name, frame_eval_cost);
+} /* ldmud_call_stack_item() */
+
+/*-------------------------------------------------------------------------*/
+static PySequenceMethods ldmud_call_stack_as_sequence = {
+    (lenfunc)ldmud_call_stack_length,           /* sq_length */
+    0,                                          /* sq_concat */
+    0,                                          /* sq_repeat */
+    (ssizeargfunc)ldmud_call_stack_item,        /* sq_item */
+    0,                                          /* sq_slice */
+    0,                                          /* sq_ass_item */
+    0,                                          /* sq_ass_slice */
+    0,                                          /* sq_contains */
+    0,                                          /* sq_inplace_concat */
+    0,                                          /* sq_inplace_repeat */
+};
+
+static PyTypeObject ldmud_call_stack_type =
+{
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "ldmud.call_stack",                 /* tp_name */
+    0,                                  /* tp_basicsize */
+    0,                                  /* tp_itemsize */
+    0,                                  /* tp_dealloc */
+    0,                                  /* tp_print */
+    0,                                  /* tp_getattr */
+    0,                                  /* tp_setattr */
+    0,                                  /* tp_reserved */
+    0,                                  /* tp_repr */
+    0,                                  /* tp_as_number */
+    &ldmud_call_stack_as_sequence,      /* tp_as_sequence */
+    0,                                  /* tp_as_mapping */
+    0,                                  /* tp_hash  */
+    0,                                  /* tp_call */
+    0,                                  /* tp_str */
+    0,                                  /* tp_getattro */
+    0,                                  /* tp_setattro */
+    0,                                  /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT,                 /* tp_flags */
+    "The current call stack",           /* tp_doc */
+    0,                                  /* tp_traverse */
+    0,                                  /* tp_clear */
+    0,                                  /* tp_richcompare */
+    0,                                  /* tp_weaklistoffset */
+    0,                                  /* tp_iter */
+    0,                                  /* tp_iternext */
+    0,                                  /* tp_methods */
+    0,                                  /* tp_members */
+    0,                                  /* tp_getset */
+};
 
 
 /*-------------------------------------------------------------------------*/
@@ -12165,6 +13060,16 @@ init_ldmud_module ()
         return NULL;
     if (PyType_Ready(&ldmud_lvalue_struct_members_type) < 0)
         return NULL;
+    if (PyType_Ready(&ldmud_instruction_type) < 0)
+        return NULL;
+    if (PyType_Ready(&ldmud_call_frame_type) < 0)
+        return NULL;
+    if (PyType_Ready(&ldmud_registered_efuns_type) < 0)
+        return NULL;
+    if (PyType_Ready(&ldmud_registered_types_type) < 0)
+        return NULL;
+    if (PyType_Ready(&ldmud_call_stack_type) < 0)
+        return NULL;
 
     ldmud_interrupt_exception_type.tp_base = (PyTypeObject *) PyExc_RuntimeError;
     if (PyType_Ready(&ldmud_interrupt_exception_type) < 0)
@@ -12196,11 +13101,18 @@ init_ldmud_module ()
     for (int i = 0; i < VISIBILITY_COUNT; i++)
         PyModule_AddIntConstant(module, visibility_names[i], i);
 
+    assert(CALL_FRAME_TYPE_COUNT == sizeof(call_frame_type_names) / sizeof(call_frame_type_names[0]));
+    for (int i = 0; i < CALL_FRAME_TYPE_COUNT; i++)
+        PyModule_AddIntConstant(module, call_frame_type_names[i], i);
+
     /* Add the efuns as a sub-namespace. */
     efuns = create_efun_namespace();
     if (!efuns)
         return NULL;
     PyModule_AddObject(module, "efuns", efuns);
+    PyModule_AddObject(module, "registered_efuns", ldmud_registered_efuns_type.tp_alloc(&ldmud_registered_efuns_type, 0));
+    PyModule_AddObject(module, "registered_types", ldmud_registered_types_type.tp_alloc(&ldmud_registered_types_type, 0));
+    PyModule_AddObject(module, "call_stack", ldmud_call_stack_type.tp_alloc(&ldmud_call_stack_type, 0));
 
     return module;
 } /* init_ldmud_module() */
@@ -12545,13 +13457,7 @@ svalue_to_python (svalue_t *svp)
             return ldmud_quoted_array_create(svp);
 
         case T_STRUCT:
-        {
-            PyObject* val = ldmud_struct_new(&ldmud_struct_type.type_base, NULL, NULL);
-            if (val != NULL)
-                ((ldmud_struct_t*)val)->lpc_struct = ref_struct(svp->u.strct);
-
-            return val;
-        }
+            return ldmud_struct_create(svp->u.strct);
 
         case T_LVALUE:
             return ldmud_lvalue_create(svp);
@@ -13939,6 +14845,80 @@ python_call_hook_object (int hook, bool is_external, object_t *ob)
 } /* python_call_hook_object() */
 
 /*-------------------------------------------------------------------------*/
+
+void
+python_call_instruction_hook (int instruction)
+
+/* Call the BEFORE_INSTRUCTION hook. We'll pass the LPC (lw)object and a Python
+ * object that contains information about the instruction.
+ */
+
+{
+    bool started;
+    bool was_external = python_is_external;
+    PyObject *args, *arg;
+    python_hook_t *hooks;
+
+    hooks = python_hooks[PYTHON_HOOK_BEFORE_INSTRUCTION];
+    if (hooks == NULL)
+        return;
+
+    started = python_start_thread();
+    python_save_context();
+
+    args = PyTuple_New(2);
+    if (args == NULL)
+    {
+        PyErr_Clear();
+        python_finish_thread(started);
+        return;
+    }
+
+    arg = svalue_to_python(&current_object);
+    if (arg == NULL)
+    {
+        PyErr_Clear();
+        Py_DECREF(args);
+        python_finish_thread(started);
+        return;
+    }
+    PyTuple_SET_ITEM(args, 0, arg);
+
+    arg = ldmud_instruction_create(instruction);
+    if (arg == NULL)
+    {
+        PyErr_Clear();
+        Py_DECREF(args);
+        python_finish_thread(started);
+        return;
+    }
+    PyTuple_SET_ITEM(args, 1, arg);
+
+    python_is_external = false;
+
+    for(python_hook_t *entry = hooks; entry; entry = entry->next)
+    {
+        PyObject *result;
+
+        result = PyObject_CallObject(entry->fun, args);
+        if (result == NULL)
+        {
+            /* Exception occurred. */
+            if (PyErr_Occurred())
+                PyErr_Print();
+            continue;
+        }
+        Py_DECREF(result);
+    }
+
+    Py_DECREF(args);
+
+    python_clear_context();
+    python_is_external = was_external;
+    python_finish_thread(started);
+} /* python_call_instruction_hook() */
+
+/*-------------------------------------------------------------------------*/
 int
 python_process_interrupt (void* arg UNUSED)
 
@@ -14581,6 +15561,162 @@ restore_python_ob (svalue_t *dest, string_t *name, svalue_t *value)
 
     return true;
 } /* restore_python_ob() */
+
+/*-------------------------------------------------------------------------*/
+bool
+convert_python_ob (svalue_t *dest, svalue_t *ob,  lpctype_t *type, struct_t *opts)
+
+/* Convert a Python object to <type> of possible. Return true on success.
+ */
+
+{
+    PyObject *fun, *pyob;
+    bool started = python_start_thread();
+
+    assert(ob->type == T_PYTHON);
+    assert(python_type_table[ob->x.python_type] != NULL);
+
+    pyob = (PyObject*)ob->u.generic;
+    fun = PyObject_GetAttrString(pyob, "__convert__");
+    if (fun != NULL)
+    {
+        PyObject *args = PyTuple_New(2);
+        PyObject *result, *pytype, *pyopts;
+        bool was_external = python_is_external;
+
+        if (args == NULL)
+        {
+            Py_DECREF(fun);
+            raise_python_error("to_type", started);
+        }
+
+        pytype = lpctype_to_pythontype(type);
+        if (pytype == NULL)
+        {
+            Py_DECREF(fun);
+            Py_DECREF(args);
+            raise_python_error("to_type", started);
+        }
+        PyTuple_SET_ITEM(args, 0, pytype);
+
+        if (opts)
+            pyopts = ldmud_struct_create(opts);
+        else
+        {
+            Py_INCREF(Py_None);
+            pyopts = Py_None;
+        }
+        if (pyopts == NULL)
+        {
+            Py_DECREF(fun);
+            Py_DECREF(args);
+            raise_python_error("to_type", started);
+        }
+        PyTuple_SET_ITEM(args, 1, pyopts);
+
+        python_is_external = false;
+        python_save_context();
+
+        result = PyObject_CallObject(fun, args);
+
+        python_clear_context();
+        python_is_external = was_external;
+        Py_DECREF(fun);
+        Py_DECREF(args);
+
+        if (result == NULL)
+            raise_python_error("to_type", started);
+        else if (result == Py_NotImplemented)
+        {
+            Py_DECREF(result);
+            python_finish_thread(started);
+            return false;
+        }
+        else
+        {
+            const char* err = python_to_svalue(dest, result);
+            Py_DECREF(result);
+            python_finish_thread(started);
+
+            if (err != NULL)
+                errorf("Bad return value from __convert__: %s\n", err);
+
+            return true;
+        }
+    }
+    PyErr_Clear();
+
+    /* Convert doesn't exist. Let's try native magic functions. */
+    if (lpctype_contains(lpctype_int, type))
+    {
+        PyObject* result = PyNumber_Long(pyob);
+        if (result != NULL)
+        {
+            const char* err = python_to_svalue(dest, result);
+            Py_DECREF(result);
+            python_finish_thread(started);
+
+            if (err != NULL)
+                errorf("Bad return value from __int__: %s\n", err);
+
+            return true;
+        }
+        PyErr_Clear();
+    }
+
+    if (lpctype_contains(lpctype_float, type))
+    {
+        PyObject* result = PyNumber_Float(pyob);
+        if (result != NULL)
+        {
+            const char* err = python_to_svalue(dest, result);
+            Py_DECREF(result);
+            python_finish_thread(started);
+
+            if (err != NULL)
+                errorf("Bad return value from __float__: %s\n", err);
+
+            return true;
+        }
+        PyErr_Clear();
+    }
+
+    if (lpctype_contains(lpctype_string, type))
+    {
+        PyObject* result = PyObject_Str(pyob);
+        if (result != NULL)
+        {
+            const char* err = python_to_svalue(dest, result);
+            Py_DECREF(result);
+            python_finish_thread(started);
+
+            if (err != NULL)
+                errorf("Bad return value from __str__: %s\n", err);
+
+            return true;
+        }
+        PyErr_Clear();
+    }
+
+    if (lpctype_contains(lpctype_bytes, type))
+    {
+        PyObject* result = PyObject_Bytes(pyob);
+        if (result != NULL)
+        {
+            const char* err = python_to_svalue(dest, result);
+            Py_DECREF(result);
+            python_finish_thread(started);
+
+            if (err != NULL)
+                errorf("Bad return value from __bytes__: %s\n", err);
+
+            return true;
+        }
+        PyErr_Clear();
+    }
+
+    return false;
+} /* convert_python_ob() */
 
 /*-------------------------------------------------------------------------*/
 string_t*
@@ -15306,6 +16442,12 @@ python_clear_refs ()
         clear_ref_in_vector(&((ldmud_lvalue_t*)var)->lpc_lvalue, 1);
     }
 
+    for(ldmud_gc_var_t* var = gc_call_frame_list; var != NULL; var = var->gcnext)
+    {
+        clear_ref_in_vector(&((ldmud_call_frame_t*)var)->ob, 1);
+        clear_program_ref(((ldmud_call_frame_t*)var)->prog, true);
+    }
+
     for(ldmud_gc_lpctype_type_t* var = gc_lpctype_list; var != NULL; var = var->gcnext)
     {
         clear_lpctype_ref(var->type);
@@ -15488,6 +16630,12 @@ python_count_refs ()
     for(ldmud_gc_var_t* var = gc_lvalue_list; var != NULL; var = var->gcnext)
     {
         count_ref_in_vector(&((ldmud_lvalue_t*)var)->lpc_lvalue, 1);
+    }
+
+    for(ldmud_gc_var_t* var = gc_call_frame_list; var != NULL; var = var->gcnext)
+    {
+        count_ref_in_vector(&((ldmud_call_frame_t*)var)->ob, 1);
+        mark_program_ref(((ldmud_call_frame_t*)var)->prog);
     }
 
     for(ldmud_gc_lpctype_type_t* var = gc_lpctype_list; var != NULL; var = var->gcnext)
