@@ -3548,6 +3548,7 @@ new_player ( object_t *ob, SOCKET_T new_socket
  */
 
 {
+    debug_message("%s New connection attempt on port %d\n", time_stamp(), login_port);
     int   i;             /* Index of free slot in all_players[] */
     char *message;       /* Failure message */
     svalue_t *ret;       /* LPC call results */
@@ -3562,6 +3563,7 @@ new_player ( object_t *ob, SOCKET_T new_socket
     set_socket_nosigpipe(new_socket);
     
     /* Check for access restrictions for this connection */
+    debug_message("%s Checking access...\n", time_stamp());
     message = allow_host_access(addr, login_port, &class);
 
     if (access_log != NULL)
@@ -3652,6 +3654,7 @@ new_player ( object_t *ob, SOCKET_T new_socket
 
     /* Link the interactive to the master */
 
+    debug_message("%s Setting up interactive struct...\n", time_stamp());
     assert_shadow_sent(master_ob);
     O_GET_INTERACTIVE(master_ob) = new_interactive;
     master_ob->flags |= O_ONCE_INTERACTIVE;
@@ -3674,6 +3677,7 @@ new_player ( object_t *ob, SOCKET_T new_socket
     put_number(&new_interactive->prompt, 0);
     new_interactive->modify_command = NULL;
     new_interactive->closing = MY_FALSE;
+    debug_message("%s Initializing telnet...\n", time_stamp());
     new_interactive->tn_enabled = MY_TRUE;
     new_interactive->do_close = 0;
     new_interactive->noecho = 0;
@@ -3735,6 +3739,7 @@ new_player ( object_t *ob, SOCKET_T new_socket
 
     /* Add the new interactive structure to the list of users */
 
+    debug_message("%s Adding to player list...\n", time_stamp());
     all_players[i] = new_interactive;
     if (i > max_player)
         max_player = i;
@@ -3778,6 +3783,7 @@ new_player ( object_t *ob, SOCKET_T new_socket
 
     /* Prepare to call logon() in the new user object.
      */
+    debug_message("%s Connection complete, calling logon()...\n", time_stamp());
     command_giver = ob;
     current_interactive = ob;
     if (new_interactive->snoop_on)

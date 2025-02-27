@@ -1,0 +1,43 @@
+services:
+  mud:
+    build:
+      context: .
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+      extra_hosts:
+        - "sbmud:127.0.0.1"
+    image: sbmud:latest
+    hostname: sbmud
+    container_name: sbmud
+    ports:
+      - "4040:4040"
+      - "4041:4041/udp"
+    volumes:
+      - ./mud:/mud
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    dns_search:
+      - .
+    depends_on:
+      - db
+    environment:
+      - PGHOST=db
+      - PGUSER=mud
+      - PGPASSWORD=mudpassword
+      - PGDATABASE=sbmud
+
+  db:
+    image: postgres:15
+    hostname: db
+    container_name: sbmud_db
+    environment:
+      - POSTGRES_USER=mud
+      - POSTGRES_PASSWORD=mudpassword
+      - POSTGRES_DB=sbmud
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
