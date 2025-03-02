@@ -60,7 +60,7 @@ enable_access_control=no
 
 # --- Language ---
 enable_use_set_light=no
-enable_use_parse_command=no
+enable_use_parse_command=yes
 enable_use_mysql=no
 enable_use_sqlite=no
 enable_use_pgsql=yes
@@ -96,3 +96,7 @@ enable_check_object_stat=no
 
 # --- Additional tools ---
 enable_erq=xerq
+
+
+enable_debug=yes
+erq_debug=1
