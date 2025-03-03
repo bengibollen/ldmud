@@ -7,7 +7,6 @@ services:
         GID: ${GID:-1000}
       extra_hosts:
         - "sbmud:127.0.0.1"
-    image: sbmud:latest
     hostname: sbmud
     container_name: sbmud
     ports:
