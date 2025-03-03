@@ -1,4 +1,4 @@
-﻿// Unicode encoding
+// Unicode encoding
 
 #define ΑΠΆΝΤΗΣΗ "Καλή μέρα!"
 
