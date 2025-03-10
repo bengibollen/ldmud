@@ -3783,7 +3783,7 @@ new_player ( object_t *ob, SOCKET_T new_socket
 
     /* Prepare to call logon() in the new user object.
      */
-    debug_message("%s Connection complete, calling logon()...\n", time_stamp());
+    debug_message("%s [INFO ]:DRIVER Connection complete, calling logon()...\n", time_stamp());
     command_giver = ob;
     current_interactive = ob;
     if (new_interactive->snoop_on)
@@ -7070,30 +7070,46 @@ f_exec (svalue_t *sp)
     ob = sp[-1].u.ob;
     obfrom = sp[0].u.ob;
 
+    debug_message("exec(): Attempting to switch connection from %s to %s\n", 
+                 get_txt(obfrom->name), get_txt(ob->name));
+
     do {
         svalue_t *v;
         interactive_t *stale_interactive, *ip;
         object_t *save_command;
 
         /* Ask the master if this exec() is ok. */
+        debug_message("exec(): Checking with master for permission\n");
         push_ref_string(inter_sp, current_prog->name);
           /* TODO: FinalFrontier suggests 'current_object->prog->name' */
         push_ref_object(inter_sp, ob, "exec");
         push_ref_object(inter_sp, obfrom, "exec");
         v = apply_master(STR_VALID_EXEC, 3);
-        if (!v || v->type != T_NUMBER || v->u.number == 0)
+        if (!v || v->type != T_NUMBER || v->u.number == 0) {
+            debug_message("exec(): Master denied permission\n");
             break;
+        }
+        debug_message("exec(): Master granted permission\n");
 
         /* stale_interactive becomes the former interactive _if_ it
          * still is an interactive_t.
          */
-        if (!(O_SET_INTERACTIVE(stale_interactive, ob)))
-        {
+        if (!(O_SET_INTERACTIVE(stale_interactive, ob))) {
+            debug_message("exec(): Target object %s has no existing connection\n", 
+                         get_txt(ob->name));
             stale_interactive = NULL;
+        } else {
+            debug_message("exec(): Target object %s has existing connection\n", 
+                         get_txt(ob->name));
         }
 
-        if (!(O_SET_INTERACTIVE(ip, obfrom)))
+        if (!(O_SET_INTERACTIVE(ip, obfrom))) {
+            debug_message("exec(): Source object %s is not interactive\n", 
+                         get_txt(obfrom->name));
             errorf("Bad argument 2 to exec(): not interactive.\n");
+        }
+        debug_message("exec(): Source object %s is interactive\n", 
+                     get_txt(obfrom->name));
 
         /* When we have to have an out of memory error, have it before pointers
          * get changed.
@@ -7146,7 +7162,7 @@ f_exec (svalue_t *sp)
         else
         {
             /* Clean up <obfrom> after the loss of connection */
-
+            debug_message("exec(): Cleaning up source object after connection loss\n");
             obfrom->flags &= ~O_ONCE_INTERACTIVE;
             check_shadow_sent(obfrom);
 
@@ -7167,8 +7183,13 @@ f_exec (svalue_t *sp)
         else if (ob == current_interactive)
             current_interactive = obfrom;
 
+        debug_message("exec(): Connection switch successful\n");
         rc = 1;
     }while(0);
+
+    if (!rc) {
+        debug_message("exec(): Connection switch failed\n");
+    }
 
     free_svalue(sp--);
     free_svalue(sp); /* object might have been destructed */

@@ -100,3 +100,6 @@ enable_erq=xerq
 
 enable_debug=yes
 erq_debug=1
+enable_debug_telnet=yes
+enable_yydebug=yes
+enable_check_object_ref=yes

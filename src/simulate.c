@@ -679,20 +679,20 @@ fatal (const char *fmt, ...)
         fprintf(stderr, "%s Current lightweight object was from %s\n"
                       , ts, current_object.u.lwob->prog->name
                             ? get_txt(current_object.u.lwob->prog->name) : "<null>");
-    debug_message("%s ", ts);
+    debug_message("%s [FATAL]:DRIVER ", ts);
     vdebug_message(fmt, va2);
     va_end(va2);
     if (current_object.type == T_OBJECT)
-        debug_message("%s Current object was %s\n"
+        debug_message("%s [FATAL]:DRIVER Current object was %s\n"
                      , ts, current_object.u.ob->name
                            ? get_txt(current_object.u.ob->name) : "<null>");
     else if (current_object.type == T_LWOBJECT)
-        debug_message("%s Current lightweight object was from %s\n"
+        debug_message("%s [FATAL]:DRIVER Current lightweight object was from %s\n"
                      , ts, current_object.u.lwob->prog->name
                            ? get_txt(current_object.u.lwob->prog->name) : "<null>");
-    debug_message("%s Dump of the call chain:\n", ts);
+    debug_message("%s [FATAL]:DRIVER Dump of the call chain:\n", ts);
     (void)dump_trace(MY_TRUE, NULL, NULL);
-    printf("%s LDMud aborting on fatal error.\n", time_stamp());
+    printf("%s [FATAL]:DRIVER LDMud aborting on fatal error.\n", time_stamp());
     fflush(stdout);
 
     sleep(1); /* let stdout settle down... abort can ignore the buffer... */
@@ -832,7 +832,7 @@ errorf (const char *fmt, ...)
           "Triple",
           "Quadruple",
         };
-        debug_message("%s %s fault, last error was: %s"
+        debug_message("%s [ERROR]:DRIVER %s fault, last error was: %s"
                      , ts, times_word[num_error]
                      , emsg_buf + 1
         );
@@ -894,7 +894,7 @@ errorf (const char *fmt, ...)
                 /* Even though caught, dump the backtrace - it makes mudlib
                  * debugging much easier.
                  */
-                debug_message("%s Caught error: %s", ts, emsg_buf + 1);
+                debug_message("%s [ERROR]:DRIVER Caught error: %s", ts, emsg_buf + 1);
                 printf("%s Caught error: %s", ts, emsg_buf + 1);
                 if (current_error_trace)
                 {
@@ -907,7 +907,7 @@ errorf (const char *fmt, ...)
                     current_error_trace_string = NULL;
                 }
                 object_name = dump_trace(MY_FALSE, &current_error_trace, &current_error_trace_string);
-                debug_message("%s ... execution continues.\n", ts);
+                debug_message("%s [INFO ]:DRIVER ... execution continues.\n", ts);
                 printf("%s ... execution continues.\n", ts);
             }
             else
@@ -980,14 +980,14 @@ errorf (const char *fmt, ...)
         line_number = get_line_number_if_any(&file);
         if (curobj.type == T_OBJECT)
         {
-            debug_message("%s program: %s, object: %s line %"PRIdMPINT"\n"
+            debug_message("%s [ERROR]:DRIVER program: %s, object: %s line %"PRIdMPINT"\n"
                          , ts, get_txt(file), get_txt(curobj.u.ob->name)
                          , line_number);
             malloced_name = ref_mstring(curobj.u.ob->name);
         }
         else /* curobj.type == T_LWOBJECT */
         {
-            debug_message("%s program: %s, lightweight object: %s line %"PRIdMPINT"\n"
+            debug_message("%s [ERROR]:DRIVER program: %s, lightweight object: %s line %"PRIdMPINT"\n"
                          , ts, get_txt(file), get_txt(curobj.u.lwob->prog->name)
                          , line_number);
             malloced_name = ref_mstring(curobj.u.lwob->prog->name);
@@ -1008,12 +1008,12 @@ errorf (const char *fmt, ...)
 
         printf("%s error in function call: %s", ts, emsg_buf+1);
         if (curobj.type == T_OBJECT)
-            printf("%s program: %s, object: %s line %"PRIdMPINT"\n"
+            printf("%s [ERROR]:DRIVER program: %s, object: %s line %"PRIdMPINT"\n"
                   , ts, get_txt(file), get_txt(curobj.u.ob->name)
                   , line_number
                   );
         else if (curobj.type == T_LWOBJECT)
-            printf("%s program: %s, lightweight object: %s line %"PRIdMPINT"\n"
+            printf("%s [ERROR]:DRIVER program: %s, lightweight object: %s line %"PRIdMPINT"\n"
                   , ts, get_txt(file), get_txt(curobj.u.lwob->prog->name)
                   , line_number
                   );
@@ -1132,14 +1132,14 @@ errorf (const char *fmt, ...)
             if (command_giver && num_error < 2)
                 add_message("error when executing program in destroyed object %s\n",
                             get_txt(object_name));
-            debug_message("%s error when executing program in destroyed object %s\n"
+            debug_message("%s [ERROR]:DRIVER error when executing program in destroyed object %s\n"
                          , ts, get_txt(object_name));
         }
     }
 
     if (num_error == 3)
     {
-        debug_message("%s Master failure: %s", ts, emsg_buf+1);
+        debug_message("%s [ERROR]:DRIVER Master failure: %s", ts, emsg_buf+1);
         printf("%s Master failure: %s", ts, emsg_buf+1);
     }
     else if (!out_of_memory)
@@ -1178,7 +1178,7 @@ errorf (const char *fmt, ...)
             culprit = current_heart_beat;
             current_heart_beat = NULL;
             set_heart_beat(culprit, MY_FALSE);
-            debug_message("%s Heart beat in %s turned off.\n"
+            debug_message("%s [ERROR]:DRIVER Heart beat in %s turned off.\n"
                          , time_stamp(), get_txt(culprit->name));
             push_ref_valid_object(inter_sp, culprit, "heartbeat error");
             a++;
@@ -1233,7 +1233,7 @@ errorf (const char *fmt, ...)
             command_giver = save_cmd;
             if (svp && (svp->type != T_NUMBER || svp->u.number) )
             {
-                debug_message("%s Heart beat in %s turned back on.\n"
+                debug_message("%s [INFO ]:DRIVER Heart beat in %s turned back on.\n"
                              , time_stamp(), get_txt(culprit->name));
                 set_heart_beat(culprit, MY_TRUE);
             }
@@ -1363,11 +1363,11 @@ warnf (char *fmt, ...)
     {
         line_number = get_line_number_if_any(&file);
         if (curobj.type == T_OBJECT)
-            debug_message("%s program: %s, object: %s line %"PRIdMPINT"\n"
+            debug_message("%s [WARN ]:DRIVER program: %s, object: %s line %"PRIdMPINT"\n"
                          , ts, get_txt(file), get_txt(curobj.u.ob->name)
                          , line_number);
         else /* curobj.type == T_LWOBJECT */
-            debug_message("%s program: %s, lightweight object: %s line %"PRIdMPINT"\n"
+            debug_message("%s [WARN ]:DRIVER program: %s, lightweight object: %s line %"PRIdMPINT"\n"
                          , ts, get_txt(file), get_txt(curobj.u.lwob->prog->name)
                          , line_number);
     }
