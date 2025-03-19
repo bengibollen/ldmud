@@ -53,7 +53,7 @@ enable_use_pthreads=no
 enable_posix_timers=yes
 
 # --- Wizlist ---
-with_wizlist_file=no
+with_wizlist_file=WIZLIST
 
 # --- Access Control ---
 enable_access_control=no
