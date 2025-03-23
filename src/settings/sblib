@@ -100,7 +100,7 @@ enable_erq=xerq
 enable_use_process_string=yes
 
 enable_debug=yes
-erq_debug=1
-enable_debug_telnet=yes
-enable_yydebug=yes
+erq_debug=0
+enable_debug_telnet=no
+enable_yydebug=no
 enable_check_object_ref=yes
