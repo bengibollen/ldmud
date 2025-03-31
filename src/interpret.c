@@ -7758,6 +7758,7 @@ complete_instruction (int instr)
  */
 
 {
+    printf("=== Complete_instruction(%d)\n", instr);
     if (instr < 0)
     {
         /* Find and decode the actual instruction at the given offset */
@@ -10290,6 +10291,7 @@ again:
        * TODO:: the long run, we should do this only for efuns (which are by
        * TODO:: then hopefully all tabled).
        */
+    //printf("%s: %s\n", time_stamp(), get_f_name(instruction));
     switch(instruction)
     {
     default:
@@ -10608,11 +10610,13 @@ again:
          * The number of arguments accepted by the efun is given by the
          * .min_arg and .max_arg entries in the instrs[] table.
          */
+        printf(" === EFunV ===\n");
 
         int code;
         int min_arg, max_arg, numarg;
 
         code = LOAD_UINT8(pc);
+        printf("code: %d\n", code);
         instruction = code + EFUNV_OFFSET;
 
         numarg = sp - ap + 1;
@@ -10643,11 +10647,16 @@ again:
             ERRORF(("Too many args for %s: got %d, expected %d.\n"
                    , instrs[instruction].name, numarg, max_arg));
 
-        CALL_PYTHON_TYPE_EFUN(instruction, numarg);
 
+                   printf("=== EFUNV_OFFSET: %d ===\n", EFUNV_OFFSET);
+        CALL_PYTHON_TYPE_EFUN(instruction, numarg);
+printf("CALL_PYTHON_TYPE_EFUN(%d, %d)\n", instruction, numarg);
         test_efun_args(instruction, numarg, sp-numarg+1);
+        printf("test_efun_args(%d, %d, %p)\n", instruction, numarg, sp-numarg+1);
         sp = (*vefun_table[instruction-EFUNV_OFFSET])(sp, numarg);
+        printf("\nsp = (*vefun_table[%d-EFUNV_OFFSET])(sp, %d)\n\n", instruction, numarg);
 #ifdef CHECK_OBJECT_REF
+        printf("===Checking shadows");
         check_all_object_shadows();
 #endif /* CHECK_OBJECT_REF */
         break;
@@ -16336,7 +16345,13 @@ again:
         /* While sp points at a function result, restore the value
          * of ap from sp[-1]; then move the result down there.
          */
+        printf("Stack type at sp[-1]: %d (T_ARG_FRAME is %d)\n", sp[-1].type, T_ARG_FRAME);
+        printf("Stack value at sp[-1]: %p\n", (void*)sp[-1].u.lvalue);
+        printf("Current sp: %p, ap: %p\n", (void*)sp, (void*)ap);
+        fflush(stdout);
         assert(sp[-1].type == T_ARG_FRAME);
+
+        printf("Did not crash!\n");
         ap = sp[-1].u.lvalue;
         sp[-1] = sp[0];
         sp--;
@@ -19988,6 +20003,7 @@ again:
 
     /* Instruction executed */
 
+    printf("===End of switch\n");
     /* Reset the no-warn-deprecated flag */
     if (instruction != F_NO_WARN_DEPRECATED)
         runtime_no_warn_deprecated = MY_FALSE;
@@ -20013,7 +20029,7 @@ again:
              , (mp_int)(sp - VALUE_STACK - (SIZEOF_STACK - 1))
              );
     }
-
+    printf("Before debug\n");
 #ifdef DEBUG
     if (expected_stack && expected_stack != sp)
     {
@@ -21002,6 +21018,7 @@ apply_master_ob (string_t *fun, int num_arg, Bool external)
  */
 
 {
+    printf(" === Apply_master_ob: %s\n", get_txt(fun));
     static int eval_cost_reserve = MASTER_RESERVED_COST;
       /* Available eval_cost reserver. If needed, the reserve is halved
        * for the duration of the apply to establish a protection against

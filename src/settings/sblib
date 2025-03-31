@@ -51,6 +51,8 @@ enable_malloc_trace=yes
 enable_malloc_lpc_trace=yes
 enable_use_pthreads=no
 enable_posix_timers=yes
+enable_trace_code=yes
+
 
 # --- Wizlist ---
 with_wizlist_file=WIZLIST

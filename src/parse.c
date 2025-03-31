@@ -164,7 +164,7 @@
  */
 
 #include "driver.h"
-
+#define USE_PARSE_COMMAND
 #if defined(USE_PARSE_COMMAND)
 
 #include "typedefs.h"
@@ -1549,6 +1549,8 @@ sub_parse ( vector_t *obvec   /* in: array of objects to match against */
     Bool      subfail;
     svalue_t *pval;
 
+    printf(" === Entered sub_parse() ===\n");
+
     /* There must be something left to match */
     if ((p_int)*cix_in == VEC_SIZE(wvec))
     {
@@ -1645,10 +1647,14 @@ v_parse_command (svalue_t *sp, int num_arg)
     free_mstring(argp[0].u.str);
     argp[0].u.str = cmd;
 
+    printf("parse_command: cmd = '%s'\n", get_txt(cmd));
+
     pattern = trim_all_spaces(argp[2].u.str);
     free_mstring(argp[2].u.str);
-    argp[2].u.str = cmd;
+    argp[2].u.str = pattern;
 
+    printf("parse_command: pattern = '%s'\n", get_txt(pattern));
+    fflush(stdout);
     ob_or_array = argp + 1;
 
     /* The remaining arguments are the lvalues.
@@ -1684,7 +1690,9 @@ v_parse_command (svalue_t *sp, int num_arg)
     }
     else if (ob_or_array->type == T_OBJECT)
     {
+        printf("Second argument is an object\n");
         obvec = deep_inventory(ob_or_array->u.ob, /* take_top: */ MY_TRUE, /* depth: */ 0);
+        printf("Inventory retrieved successfully\n");
     }
     else
     {
@@ -1763,11 +1771,13 @@ v_parse_command (svalue_t *sp, int num_arg)
     for (six = 0, cix = 0, fail = MY_FALSE, pix = 0
         ; (p_int)pix < VEC_SIZE(patvec); pix++)
     {
+        printf("parse_command: six = %d, pix = %d, cix = %d\n", (int)six, (int)pix, (int)cix);
         pval = NULL;
         fail = MY_FALSE;
 
         if (mstreq(patvec->item[pix].u.str, STR_PERCENT_S))
         {
+            printf("parse_command: found %%s\n");
             /* If at the end of the pattern, %s matches everything left
              * in the wvec.
              * Otherwise it matches everything up to the next pattern
@@ -1775,11 +1785,13 @@ v_parse_command (svalue_t *sp, int num_arg)
              */
             if ((p_int)pix == VEC_SIZE(patvec)-1)
             {
+                printf("parse_command: found %%s at end of pattern\n");
                 pval = slice_words(wvec, cix, VEC_SIZE(wvec)-1);
                 cix = VEC_SIZE(wvec);
             }
             else
             {
+                printf("parse_command: no %%s in pattern\n");
                 size_t fword, ocix, fpix;
 
                 ocix = fword = cix;
@@ -1790,12 +1802,13 @@ v_parse_command (svalue_t *sp, int num_arg)
                  * The loop ends when a match is found, or wvec is exhausted.
                  */
                 do {
+                    printf("parse_command: attempting to parse with six = %d, pix = %d, cix = %d\n", (int)six, (int)pix, (int)cix);
                     fail = MY_FALSE;
                     pval = sub_parse(obvec, patvec, &pix, wvec, &cix, &fail
-                                     , (six < (size_t)num_arg) ? argp[six].u.lvalue
-                                                       : 0);
+                        , (six < (size_t)num_arg) ? argp[six].u.lvalue : 0);
                     if (fail)
                     {
+                        printf("parse_command: failed to parse with six = %d, pix = %d, cix = %d\n", (int)six, (int)pix, (int)cix);
                         cix = ++ocix;
                         pix = fpix;
                     }
@@ -1808,15 +1821,22 @@ v_parse_command (svalue_t *sp, int num_arg)
                  */
                 if (!fail)
                 {
+                    printf("parse_command: found match with six = %d, pix = %d, cix = %d\n", (int)six, (int)pix, (int)cix);
                     stack_put(pval, argp, six+1, num_arg);
                     pval = slice_words(wvec, fword, ocix-1);
                     stack_put(pval, argp, six++, num_arg);
                     pval = NULL;
                 }
+                else
+                {
+                    printf("parse_command: no %%s in pattern\n");
+                }
             }
         }
         else if (!mstreq(patvec->item[pix].u.str, STR_SLASH))
         {
+            
+            printf("parse_command: found slash\n");
             /* Everything else is handled by sub_parse() */
             pval = sub_parse( obvec, patvec, &pix, wvec, &cix, &fail
                             , (six < (size_t)num_arg) ? argp[six].u.lvalue : 0);
@@ -1835,6 +1855,7 @@ v_parse_command (svalue_t *sp, int num_arg)
 
     /* Clean up via the error handler */
     sp = pop_n_elems(num_arg + 4, sp);
+    printf(" == parse_command: sp = %p\n", sp);
     push_number(sp, fail ? 0 : 1);
 
     return sp;

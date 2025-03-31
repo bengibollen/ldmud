@@ -284,6 +284,9 @@ main (int argc, char **argv)
     volatile int rc;
 
     rc = 0;
+#ifdef DEBUG
+    printf("=== DEBUG MODE ===\n");
+#endif
 
     /* On some systems, SIGALRM is sometimes blocked.
      * The reasons are unknown, but this seems to be the cure.
