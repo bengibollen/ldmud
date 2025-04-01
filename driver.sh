@@ -6,4 +6,4 @@ fi
 
 export PYTHONUNBUFFERED=1
 
-exec /usr/local/bin/ldmud -m /mud/sblib -M secure/master.c --python-script ../startup/__main__.py
+exec /usr/local/bin/ldmud -m /mud/sblib -d -M secure/master.c --python-script ../startup/__main__.py
