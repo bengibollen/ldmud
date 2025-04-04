@@ -9,7 +9,8 @@ This document provides a reference for the functions defined in `master.c`.
 Perform mudlib specific setup of the master.
 
 **Arguments:**
-- `arg`: 
+
+- `arg`:
   - `0` if the mud just started.
   - `1` if the master is reactivated destructed one.
   - `2` if the master is a reactivated destructed one, which lost all variables.
@@ -24,7 +25,8 @@ Return the value to be used as uid (and -euid) of a (re)loaded master.
 
 **Description:**
 Possible results are in general:
-- `"<uid">` -> uid = "<uid>", euid = "<euid>"
+
+- `<uid>` -> uid = "&lt;uid>", euid = "&lt;euid>"
 In non-strict-euids mode, more results are possible:
 - `0` -> uid = 0, euid = 0
 - `<num>` -> uid = 'default', euid = 0
@@ -34,6 +36,7 @@ In non-strict-euids mode, more results are possible:
 Evaluate an argument given as option '-f' to the driver.
 
 **Arguments:**
+
 - `arg`: The argument string from the option text '-f<arg>'. If several '-f' options are given, this function will be called sequentially with all given arguments.
 
 **Description:**
@@ -44,6 +47,7 @@ This function can be used to pass the master commands via arguments to the drive
 Perform final actions before opening the game to players.
 
 **Arguments:**
+
 - `eflag`: This is the number of '-e' options given to the parser. Normally it is just 0 or 1.
 
 **Result:**
@@ -54,6 +58,7 @@ An array of strings, which traditionally designate the objects to be preloaded w
 Preload a given object.
 
 **Arguments:**
+
 - `file`: The filename of the object to preload, as returned by `epilog()`.
 
 **Description:**
@@ -74,6 +79,7 @@ Note that the connection is not bound yet! The gamedriver will call the lfun `lo
 Handle the loss of an IP connection.
 
 **Arguments:**
+
 - `obj`: The (formerly) interactive object (player).
 
 **Description:**
@@ -84,6 +90,7 @@ This called by the gamedriver to handle the removal of an IP connection, either 
 Remove a player object from the game.
 
 **Arguments:**
+
 - `player`: The player object to be removed.
 
 **Description:**
@@ -94,6 +101,7 @@ This function is called by the gamedriver to expel remaining players from the ga
 Notify the loss of the erq demon.
 
 **Arguments:**
+
 - `callback`: The callback closure set for an erq request.
 
 **Description:**
@@ -104,6 +112,7 @@ If the erq connection dies prematurely, the driver will call this lfun for every
 Compile a virtual object.
 
 **Arguments:**
+
 - `previous_object()`: The object requesting the virtual object.
 - `filename`: The requested filename for the virtual object.
 
@@ -118,6 +127,7 @@ This function is called if the compiler can't find the filename for an object to
 Return the author of a file.
 
 **Arguments:**
+
 - `file`: The name of the file in question.
 
 **Result:**
@@ -131,6 +141,7 @@ This function is called for maintenance of the wiz-list, to score errors to the 
 Handle the destruction of an object's environment.
 
 **Arguments:**
+
 - `ob`: The object whose environment is being destructed.
 
 **Description:**
@@ -141,6 +152,7 @@ When an object is destructed, this function is called with every item in that ro
 Move an object or destruct it if that is not possible.
 
 **Arguments:**
+
 - `what`: The object to be moved.
 - `to`: The destination object.
 
@@ -152,6 +164,7 @@ An error in this function can be very nasty. Note that unlimited recursion is li
 Prepare the destruction of the given object.
 
 **Arguments:**
+
 - `ob`: The object to destruct.
 
 **Result:**
@@ -165,6 +178,7 @@ The gamedriver calls this function whenever an object shall be destructed. It ex
 Schedule a shutdown for the near future.
 
 **Arguments:**
+
 - `minutes`: The desired time in minutes till the shutdown:
   - `6`, if just the user reserve has been put into use.
   - `1`, if the (smaller) system or even the master reserve has been put into use as well.
@@ -177,6 +191,7 @@ The gamedriver calls this function when it runs low on memory. At this time, it 
 Notify the master about an immediate shutdown.
 
 **Arguments:**
+
 - `crash_reason`: If 0, it is a normal shutdown, otherwise it is a crash and `crash_reason` gives a hint at the reason.
 
 **Description:**
@@ -194,6 +209,7 @@ This is called when the gamedriver executes a closure using a vanished lfun. A p
 Announce a compiler-time error.
 
 **Arguments:**
+
 - `file`: The name of file containing the error (it needn't be an object file!).
 - `err`: The error message.
 
@@ -205,6 +221,7 @@ Whenever the LPC compiler detects an error, this function is called. It should a
 Announce an error in the heart_beat() function.
 
 **Arguments:**
+
 - `culprit`: The object which lost the heart_beat.
 - `err`: The error message.
 - `prg`: The executed program (might be 0).
@@ -222,6 +239,7 @@ This function has to announce an error in the heart_beat() function of culprit. 
 Announce a runtime error.
 
 **Arguments:**
+
 - `err`: The error message.
 - `prg`: The executed program.
 - `curobj`: The object causing the error.
@@ -236,18 +254,21 @@ This function has to announce a runtime error to the active user, resp. handle a
 Validate the execution of a privileged operation.
 
 **Arguments:**
+
 - `op`: The requested operation.
 - `who`: The object requesting the operation (filename or object pointer).
 - `arg`: Additional argument, depending on `<op>`.
 - `arg2`: Additional argument, depending on `<op>`.
 
 **Result:**
+
 - `>0`: The caller is allowed for this operation.
 - `0`: The caller was probably misled; try to fix the error.
 - `<0`: A real privilege violation; handle it as error.
 
 **Description:**
 Privileged operations are:
+
 - `attach_erq_demon`: Attach the erq demon to object `<arg>` with flag `<arg2>`.
 - `bind_lambda`: Bind a lambda-closure to object `<arg>`.
 - `call_out_info`: Return an array with all call_out informations.
@@ -272,6 +293,7 @@ Privileged operations are:
 Validate a shadowing.
 
 **Arguments:**
+
 - `previous_object()`: The wannabe shadow.
 - `victim`: The object to be shadowed.
 
@@ -286,6 +308,7 @@ This function simply asks the victim if it denies a shadow.
 Check if the player is of high enough level for several things.
 
 **Arguments:**
+
 - `what`: The 'thing' type.
 
 **Result:**
@@ -293,6 +316,7 @@ Return 0 to disallow, any other value to allow it.
 
 **Description:**
 Types asked for so far are:
+
 - `"error messages"`: Is the player allowed to see error messages (used by the master)? (min-level: 20)
 - `"wizard"`: Is the player considered a wizard (used by the mudlib)? (min-level: 20)
 
@@ -301,6 +325,7 @@ Types asked for so far are:
 Check if the player is allowed to use tracing.
 
 **Arguments:**
+
 - `what`: The actual action.
 
 **Result:**
@@ -308,6 +333,7 @@ Return 0 to disallow, any other value to allow it.
 
 **Description:**
 Actions asked for so far are:
+
 - `"trace"`: Is the user allowed to use tracing?
 - `"traceprefix"`: Is the user allowed to set a traceprefix? (min-level: 24 for both)
 
@@ -316,6 +342,7 @@ Actions asked for so far are:
 Validate the rebinding of an IP connection by usage of efun `exec()`.
 
 **Arguments:**
+
 - `name`: The name of the _program_ attempting to rebind the connection. This is not the object_name() of the object, and has no leading slash.
 - `ob`: The object to receive the connection.
 - `obfrom`: The object giving the connection away.
@@ -331,6 +358,7 @@ Only `obj/master.c` and `secure/login.c` are allowed to do that.
 Validate if the snoopers of an object may be revealed by usage of the efun `query_snoop()`.
 
 **Arguments:**
+
 - `previous_object()`: The asking object.
 - `obj`: The object which snoopers are to be revealed.
 
@@ -345,6 +373,7 @@ Every true wizard can test for a snoop.
 Validate the start/stop of a snoop.
 
 **Arguments:**
+
 - `snoopee`: The victim of the snoop.
 - `snooper`: The wannabe snooper, or 0 when stopping a snoop.
 
@@ -359,6 +388,7 @@ It is up to the simul_efun object to start/stop snoops.
 Validate a reading/writing file operation.
 
 **Arguments:**
+
 - `path`: The (possibly partial) filename given to the operation.
 - `euid`: The euid of the caller (might be 0).
 - `fun`: The name of the operation requested.
@@ -375,6 +405,7 @@ The path finally to be used must not contain spaces or '..'. These are the centr
 Validate a writing file operation.
 
 **Arguments:**
+
 - `path`: The (possibly partial) filename given to the operation.
 - `euid`: The euid of the caller (might be 0).
 - `fun`: The name of the operation requested.
@@ -391,6 +422,7 @@ The path finally to be used must not contain spaces or '..'. These are the centr
 Absolutize a relative filename given to the editor.
 
 **Arguments:**
+
 - `str`: The relative filename (without leading slash).
 
 **Result:**
@@ -404,6 +436,7 @@ This function is called to convert a relative filename to an absolute path for t
 Save individual settings of ed for a wizard.
 
 **Arguments:**
+
 - `who`: The wizard using the editor.
 - `code`: The encoded options to be saved.
 
@@ -418,6 +451,7 @@ This function has to save the given integer into a safe place in the realm of th
 Retrieve individual settings of ed for a wizard.
 
 **Arguments:**
+
 - `who`: The wizard using the editor.
 
 **Result:**
@@ -431,6 +465,7 @@ This function retrieves the saved editor settings for the given wizard.
 Return a filename for the ed buffer to be saved into.
 
 **Arguments:**
+
 - `this_player()`: The wizard using the editor.
 - `file`: The name of the file currently in the buffer.
 
@@ -480,6 +515,7 @@ A string representing the 'all' word.
 Verify that an object is allowed to create a wizard.
 
 **Arguments:**
+
 - `ob`: The object that called create_wizard().
 
 **Result:**
@@ -493,6 +529,7 @@ This function is called for a wizard that has dropped a castle. It verifies that
 Create a home directory and a castle for a new wizard.
 
 **Arguments:**
+
 - `owner`: The name of the wizard.
 - `domain`: The domain of the wizard.
 - `caller`: The object calling this function.
@@ -529,6 +566,7 @@ This function is called during the final phase of a garbage collection if the re
 Handle a received IMP message.
 
 **Arguments:**
+
 - `host`: Name of the host the message comes from.
 - `msg`: The received message.
 - `port`: The port number from which the message was sent.

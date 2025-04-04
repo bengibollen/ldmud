@@ -164,7 +164,7 @@
  */
 
 #include "driver.h"
-
+#define USE_PARSE_COMMAND
 #if defined(USE_PARSE_COMMAND)
 
 #include "typedefs.h"
@@ -678,6 +678,9 @@ slice_words (vector_t *wvec, size_t from, size_t to)
     string_t        *tx;
     static svalue_t  stmp;
 
+    printf(" === slice_words ===\n");
+    fflush(stdout);
+
     if (from > to)
         return NULL;
 
@@ -714,6 +717,9 @@ find_string (string_t *str, vector_t *wvec, size_t *cix_in)
     string_t *p1;
     char *p2;
     vector_t *split;
+
+    printf(" === find_string ===\n");
+    fflush(stdout);
 
     /* Step through wvec and look for a match */
     for (; (p_int)*cix_in < VEC_SIZE(wvec); (*cix_in)++)
@@ -816,6 +822,9 @@ check_adjectiv (size_t obix, vector_t *wvec, size_t from, size_t to)
     string_t *adstr;
     char     *adstrp;
     vector_t *ids;    /* Adj list of the object */
+
+    printf(" === check_adjectiv ===\n");
+    fflush(stdout);
 
     /* Get the objects adj-list if existing */
     if (gAdjid_list->item[obix].type == T_POINTER)
@@ -924,6 +933,10 @@ number_parse( vector_t *obvec UNUSED  /* in: array of objects to match against *
 
     size_t cix;
     int ten, ones, num;
+
+    printf(" === number_parse ===\n");
+    fflush(stdout);
+
 
     cix = *cix_in; *fail = MY_FALSE;
 
@@ -1037,6 +1050,44 @@ match_object (size_t obix, vector_t *wvec, size_t *cix_in, Bool *plur)
     int       pos;
     string_t  *str;
 
+    printf(" === match_object ===\n");
+    fflush(stdout);
+
+    // Debug print singular IDs
+    if (gId_list && VEC_SIZE(gId_list) > (p_int)obix) {
+        printf("Singular IDs for object %zu: ", obix);
+        if (gId_list->item[obix].type == T_POINTER) {
+            vector_t *ids = gId_list->item[obix].u.vec;
+            for (size_t i = 0; i < VEC_SIZE(ids); i++) {
+                if (ids->item[i].type == T_STRING)
+                    printf("%s ", get_txt(ids->item[i].u.str));
+            }
+        } else {
+            printf("(not loaded yet)");
+        }
+        printf("\n");
+    } else {
+        printf("No singular IDs for object %zu\n", obix);
+    }
+    
+    // Debug print plural IDs
+    if (gPluid_list && VEC_SIZE(gPluid_list) > (p_int)obix) {
+        printf("Plural IDs for object %zu: ", obix);
+        if (gPluid_list->item[obix].type == T_POINTER) {
+            vector_t *ids = gPluid_list->item[obix].u.vec;
+            for (size_t i = 0; i < VEC_SIZE(ids); i++) {
+                if (ids->item[i].type == T_STRING)
+                    printf("%s ", get_txt(ids->item[i].u.str));
+            }
+        } else {
+            printf("(not loaded yet)");
+        }
+        printf("\n");
+    } else {
+        printf("No plural IDs for object %zu\n", obix);
+    }
+    fflush(stdout);
+
     /* Loop over the four lists of ids */
     for (cplur = *plur ? 2 : 0; cplur < 4; cplur++)
     {
@@ -1083,9 +1134,11 @@ match_object (size_t obix, vector_t *wvec, size_t *cix_in, Bool *plur)
             if (ids->item[il].type == T_STRING)
             {
                 str = ids->item[il].u.str;  /* A given id of the object */
+                printf(" === Trying to match: %s ===\n", get_txt(str));
                 old_cix = *cix_in;
                 if ((pos = find_string(str, wvec, cix_in)) >= 0)
                 {
+                    printf(" === Found match: %s ===\n", get_txt(str));
                     /* Id matched, now check a possible adjective */
                     if ((size_t)pos == old_cix
                      || check_adjectiv(obix, wvec, old_cix, pos-1))
@@ -1130,6 +1183,9 @@ item_parse (vector_t *obvec, vector_t *wvec, size_t *cix_in, Bool *fail)
     Bool      match_all;   /* 'all' numeral */
     size_t    obix;
 
+    printf(" === item_parse ===\n");
+    fflush(stdout);
+
     /* Intermediate result vector */
     tmp = allocate_array(VEC_SIZE(obvec) + 1);
 
@@ -1158,7 +1214,7 @@ item_parse (vector_t *obvec, vector_t *wvec, size_t *cix_in, Bool *fail)
     {
         *fail = MY_FALSE;
         cix = *cix_in;
-
+        printf(" === Object to parse: %s ===\n", get_txt(obvec->item[obix].u.ob->name));
         if (obvec->item[obix].type != T_OBJECT)
             continue;
 
@@ -1233,6 +1289,9 @@ living_parse (vector_t *obvec, vector_t *wvec, size_t *cix_in, Bool *fail)
     size_t     obix, tix;
 
     *fail = MY_FALSE;
+    printf(" === living_parse ===\n");
+    fflush(stdout);
+
 
     /* Fill live with all living objects from <obvec> */
 
@@ -1297,6 +1356,9 @@ single_parse (vector_t *obvec, vector_t *wvec, size_t *cix_in, Bool *fail)
     Bool      plur_flag;
     svalue_t *osvp;
 
+    printf(" === single_parse ===\n");
+    fflush(stdout);
+
     /* Loop over the list of objects */
     osvp = obvec->item;
     for (obix = 0; (p_int)obix < VEC_SIZE(obvec); obix++, osvp++)
@@ -1349,6 +1411,10 @@ prepos_parse (vector_t *wvec, size_t *cix_in, Bool *fail, svalue_t *prepos)
   vector_t *pvec, *tvec;
   string_t *tmp;
   size_t    pix, tix;
+
+  printf(" === prepos_parse ===\n");
+  fflush(stdout);
+
 
   /* Determine list to match against */
   rv = prepos ? get_rvalue_no_collapse(prepos, NULL) : NULL;
@@ -1444,6 +1510,9 @@ one_parse ( vector_t *obvec       /* in: array of objects to match against */
     char      ch;          /* Command character */
     svalue_t *pval;
     char     *str1, *str2;
+
+    printf(" === one_parse ===\n");
+    fflush(stdout);
 
     /* Nothing left to parse? */
     if ((p_int)*cix_in == VEC_SIZE(wvec))
@@ -1550,6 +1619,9 @@ sub_parse ( vector_t *obvec   /* in: array of objects to match against */
     Bool      subfail;
     svalue_t *pval;
 
+    printf(" === sub_parse ===\n");
+    fflush(stdout);
+
     /* There must be something left to match */
     if ((p_int)*cix_in == VEC_SIZE(wvec))
     {
@@ -1639,6 +1711,8 @@ v_parse_command (svalue_t *sp, int num_arg)
 
     argp = sp - num_arg + 1;
 
+    printf(" === parse_command ===\n");
+
     /* Trim the command and pattern (and store them
      * on the stack in case of errors).
      */
@@ -1695,6 +1769,23 @@ v_parse_command (svalue_t *sp, int num_arg)
         errorf("Bad second argument to parse_command()\n");
     }
 
+    // Print out obvec and wvec for debugging
+    printf("obvec: ");
+    for (size_t i = 0; i < VEC_SIZE(obvec); i++)
+    {
+        if (obvec->item[i].type == T_OBJECT && obvec->item[i].u.ob)
+        printf("[%s] ", get_txt(obvec->item[i].u.ob->name));
+    else
+        printf("[non-object] ");
+    }
+    printf("\nwvec: ");
+    for (size_t i = 0; i < VEC_SIZE(wvec); i++)
+    {
+        printf("%s ", get_txt(wvec->item[i].u.str));
+    }
+    printf("\n");
+    fflush(stdout);
+
     /* Save the previous context and set up the error handler */
 
     old->id       = gId_list;
@@ -1724,6 +1815,13 @@ v_parse_command (svalue_t *sp, int num_arg)
     pval = apply_master(STR_PC_ID_LIST, 0);
     if (pval && pval->type == T_POINTER)
     {
+        printf("Id list: ");
+        for (size_t i = 0; i < VEC_SIZE(pval->u.vec); i++)
+        {
+            printf("%s ", get_txt(pval->u.vec->item[i].u.str));
+        }
+        printf("\n");
+        fflush(stdout);
         gId_list_d = ref_array(pval->u.vec);
     }
     else
@@ -1732,6 +1830,13 @@ v_parse_command (svalue_t *sp, int num_arg)
     pval = apply_master(STR_PC_P_ID_LIST, 0);
     if (pval && pval->type == T_POINTER)
     {
+        printf("Plural list: ");
+        for (size_t i = 0; i < VEC_SIZE(pval->u.vec); i++)
+        {
+            printf("%s ", get_txt(pval->u.vec->item[i].u.str));
+        }
+        printf("\n");
+        fflush(stdout);
         gPluid_list_d = ref_array(pval->u.vec);
     }
     else
@@ -1740,7 +1845,13 @@ v_parse_command (svalue_t *sp, int num_arg)
     pval = apply_master(STR_PC_ADJ_LIST, 0);
     if (pval && pval->type == T_POINTER)
     {
-        gAdjid_list_d = ref_array(pval->u.vec);
+        printf("Adjective list: ");
+        for (size_t i = 0; i < VEC_SIZE(pval->u.vec); i++)
+        {
+            printf("%s ", get_txt(pval->u.vec->item[i].u.str));
+        }
+        printf("\n");
+        fflush(stdout);        gAdjid_list_d = ref_array(pval->u.vec);
     }
     else
         gAdjid_list_d = NULL;
@@ -1748,6 +1859,13 @@ v_parse_command (svalue_t *sp, int num_arg)
     pval = apply_master(STR_PC_PREPOS, 0);
     if (pval && pval->type == T_POINTER)
     {
+        printf("Prepos list: ");
+        for (size_t i = 0; i < VEC_SIZE(pval->u.vec); i++)
+        {
+            printf("%s ", get_txt(pval->u.vec->item[i].u.str));
+        }
+        printf("\n");
+        fflush(stdout);
         gPrepos_list = ref_array(pval->u.vec);
     }
     else
@@ -1759,6 +1877,13 @@ v_parse_command (svalue_t *sp, int num_arg)
     else
         gAllword = NULL;
 
+        printf("\npatvec: ");
+        for (size_t i = 0; i < VEC_SIZE(patvec); i++)
+        {
+            printf("%s ", get_txt(patvec->item[i].u.str));
+        }
+        printf("\n");
+        fflush(stdout);
     /* Loop through the pattern. Handle %s but not '/'
     */
     for (six = 0, cix = 0, fail = MY_FALSE, pix = 0
@@ -1767,8 +1892,11 @@ v_parse_command (svalue_t *sp, int num_arg)
         pval = NULL;
         fail = MY_FALSE;
 
+        printf(" Pattern check: %s\n", get_txt(patvec->item[pix].u.str));
+
         if (mstreq(patvec->item[pix].u.str, STR_PERCENT_S))
         {
+            printf(" Pattern check: %s\n", get_txt(patvec->item[pix].u.str));
             /* If at the end of the pattern, %s matches everything left
              * in the wvec.
              * Otherwise it matches everything up to the next pattern
@@ -1817,15 +1945,42 @@ v_parse_command (svalue_t *sp, int num_arg)
         }
         else if (!mstreq(patvec->item[pix].u.str, STR_SLASH))
         {
+            printf(" Pattern check: %s\n", get_txt(patvec->item[pix].u.str));
             /* Everything else is handled by sub_parse() */
             pval = sub_parse( obvec, patvec, &pix, wvec, &cix, &fail
                             , (six < (size_t)num_arg) ? argp + six : 0);
         }
 
         if (!fail && pval)
+        {
+            printf("Success with value type: %d\n", pval->type);
+            fflush(stdout);
+            
+            // Now print based on type
+            switch(pval->type) {
+                case T_STRING:
+                    printf("String value: %s\n", get_txt(pval->u.str));
+                    break;
+                case T_NUMBER:
+                    printf("Number value: %d\n", pval->u.number);
+                    break;
+                case T_POINTER:
+                    printf("Array value with %d elements\n", VEC_SIZE(pval->u.vec));
+                    break;
+                case T_OBJECT:
+                    printf("Object value: %s\n", get_txt(pval->u.ob->name));
+                    break;
+                default:
+                    printf("Other type\n");
+            }
+            fflush(stdout);
             stack_put(pval, argp, six++, num_arg);
+        }
         else if (fail)
+        {
+            printf("Failure: %s\n", get_txt(patvec->item[pix].u.str));
             break;
+        }
     } /* for() */
 
     /* Also fail when there are words left to parse and pattern exhausted.
