@@ -164,7 +164,7 @@
  */
 
 #include "driver.h"
-
+#define USE_PARSE_COMMAND
 #if defined(USE_PARSE_COMMAND)
 
 #include "typedefs.h"
@@ -507,6 +507,10 @@ load_lpc_info (size_t ix, object_t *ob)
     Bool make_plural = MY_FALSE;  /* TRUE: synthesize plurals */
     svalue_t * ret;
 
+    //print out relevant info about argumants
+    printf("Loading LPC info for object at index: %zu\n", ix);
+    printf("Object flags: %d\n", ob ? ob->flags : -1);
+    printf("Object name: %s\n", ob ? get_txt(ob->name) : "NULL");
     if (!ob || ob->flags & O_DESTRUCTED)
         return;
 
@@ -519,6 +523,29 @@ load_lpc_info (size_t ix, object_t *ob)
        )
     {
         ret = apply(STR_PC_P_ID_LIST, ob, 0);
+        printf("ret: %p\n", ret);
+
+        // Add this to see the actual return value content:
+        if (ret) {
+            if (ret->type == T_POINTER) {
+                printf("Return value is an array with %d elements\n", VEC_SIZE(ret->u.vec));
+                for (int i = 0; i < VEC_SIZE(ret->u.vec) && i < 5; i++) {
+                    if (ret->u.vec->item[i].type == T_STRING) {
+                        printf("  item[%d]: \"%s\"\n", i, get_txt(ret->u.vec->item[i].u.str));
+                    } else {
+                        printf("  item[%d]: (non-string type: %d)\n", i, ret->u.vec->item[i].type);
+                    }
+                }
+                if (VEC_SIZE(ret->u.vec) > 5) {
+                    printf("  ... (more items)\n");
+                }
+            } else {
+                printf("Return value type: %d\n", ret->type);
+            }
+        } else {
+            printf("Return value is NULL\n");
+        }
+
         if (ret && ret->type == T_POINTER)
             assign_svalue_no_free(&gPluid_list->item[ix], ret);
         else
@@ -538,6 +565,28 @@ load_lpc_info (size_t ix, object_t *ob)
      && !(ob->flags & O_DESTRUCTED) )
     {
         ret = apply(STR_PC_ID_LIST, ob, 0);
+        printf("ret: %p\n", ret);
+
+        if(ret) {
+            if (ret->type == T_POINTER) {
+                printf("Return value is an array with %d elements\n", VEC_SIZE(ret->u.vec));
+                for (int i = 0; i < VEC_SIZE(ret->u.vec) && i < 5; i++) {
+                    if (ret->u.vec->item[i].type == T_STRING) {
+                        printf("  item[%d]: \"%s\"\n", i, get_txt(ret->u.vec->item[i].u.str));
+                    } else {
+                        printf("  item[%d]: (non-string type: %d)\n", i, ret->u.vec->item[i].type);
+                    }
+                }
+                if (VEC_SIZE(ret->u.vec) > 5) {
+                    printf("  ... (more items)\n");
+                }
+            } else {
+                printf("Return value type: %d\n", ret->type);
+            }
+        } else {
+            printf("Return value is NULL\n");
+        }
+
         if (ret && ret->type == T_POINTER)
         {
             assign_svalue_no_free(&gId_list->item[ix], ret);
@@ -1043,6 +1092,34 @@ match_object (size_t obix, vector_t *wvec, size_t *cix_in, Bool *plur)
     int       pos;
     string_t  *str;
 
+    printf(" === match_object() ===\n");
+    printf("obix: %d\n", (int)obix);
+    printf("cix_in: %d\n", (int)*cix_in);
+    printf("plur: %d\n", (int)*plur);
+
+// print the contents of gld_list array to stdout
+    for (il = 0; (p_int)il < VEC_SIZE(gId_list); il++)
+    {
+        if (gId_list->item[il].type == T_STRING)
+            printf("gId_list %d: %s\n", (int)il, get_txt(gId_list->item[il].u.str));
+        if (gId_list->item[il].type == T_OBJECT)
+            printf("object %d: %s\n", (int)il, get_txt(gId_list->item[il].u.ob->name));
+    }
+    // print the contents of gPluid_list array to stdout
+    for (il = 0; (p_int)il < VEC_SIZE(gPluid_list); il++)
+    {
+        if (gPluid_list->item[il].type == T_STRING)
+            printf("gPluid_list %d: %s\n", (int)il, get_txt(gPluid_list->item[il].u.str));
+    }
+
+    for (il = 0; (p_int)il < VEC_SIZE(gId_list_d); il++)
+    {
+        if (gId_list_d->item[il].type == T_STRING)
+            printf("gId_list_d %d: %s\n", (int)il, get_txt(gId_list_d->item[il].u.str));
+    }
+    fflush(stdout);
+    /* Check if the object is valid */
+
     /* Loop over the four lists of ids */
     for (cplur = *plur ? 2 : 0; cplur < 4; cplur++)
     {
@@ -1135,6 +1212,25 @@ item_parse (vector_t *obvec, vector_t *wvec, size_t *cix_in, Bool *fail)
     Bool      plur_flag;   /* Plural numeral */
     Bool      match_all;   /* 'all' numeral */
     size_t    obix;
+
+    printf(" === item_parse() ===\n");
+
+    // print the contents of the obvec array to stdout
+    for (obix = 0; (p_int)obix < VEC_SIZE(obvec); obix++)
+    {
+        if (obvec->item[obix].type == T_OBJECT)
+            printf("object %d: %s\n", (int)obix, get_txt(obvec->item[obix].u.ob->name));
+    }
+
+    // print the contents of the wvec array to stdout
+    for (obix = 0; (p_int)obix < VEC_SIZE(wvec); obix++)
+    {
+        if (wvec->item[obix].type == T_STRING)
+            printf("string %d: %s\n", (int)obix, get_txt(wvec->item[obix].u.str));
+    }
+    fflush(stdout);
+
+
 
     /* Intermediate result vector */
     tmp = allocate_array(VEC_SIZE(obvec) + 1);
