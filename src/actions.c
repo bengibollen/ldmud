@@ -628,21 +628,46 @@ notify_no_command (char *command, object_t *save_command_giver)
 
     Bool      useHook;
 
+    printf("notify_no_command: Starting error handling\n");
+    
     useHook = (   driver_hook[H_SEND_NOTIFY_FAIL].type == T_CLOSURE
                || driver_hook[H_SEND_NOTIFY_FAIL].type == T_STRING
               );
 
-    svp = &error_msg;
+    printf("notify_no_command: H_SEND_NOTIFY_FAIL type = %d\n", driver_hook[H_SEND_NOTIFY_FAIL].type);
+    printf("notify_no_command: H_NOTIFY_FAIL type = %d\n", driver_hook[H_NOTIFY_FAIL].type);
+    printf("notify_no_command: T_CLOSURE = %d, T_STRING = %d\n", T_CLOSURE, T_STRING);
+    printf("notify_no_command: useHook calculation:\n");
+    printf("  H_SEND_NOTIFY_FAIL.type == T_CLOSURE: %d\n", 
+           driver_hook[H_SEND_NOTIFY_FAIL].type == T_CLOSURE);
+    printf("  H_SEND_NOTIFY_FAIL.type == T_STRING: %d\n",
+           driver_hook[H_SEND_NOTIFY_FAIL].type == T_STRING);
+    printf("notify_no_command: useHook = %d\n", useHook);
 
+    printf("notify_no_command: useHook = %d\n", useHook);
+    printf("notify_no_command: hook type: %d\n", driver_hook[H_NOTIFY_FAIL].type);
+    svp = &error_msg;
+    printf("notify_no_command: Command: '%s'\n", command);
+    printf("notify_no_command: Command giver: %s\n", get_txt(command_giver->name));
+    printf("notify_no_command: Error msg type: %d\n", svp->type);
+    
     if (svp->type == T_STRING)
     {
+        printf("notify_no_command: String error message: '%s'\n", get_txt(svp->u.str));
         if (!useHook)
+        {
+            printf("notify_no_command: Telling object directly\n");
             tell_object(command_giver, svp->u.str);
+        }
         else
+        {
+            printf("notify_no_command: Pushing string for hook\n"); 
             push_svalue(svp);
+        }
     }
     else if (svp->type == T_CLOSURE)
     {
+        printf("notify_no_command: Handling closure error message\n");
         push_ref_valid_object(inter_sp, save_command_giver, "notify_no_command");
         call_lambda(svp, 1);
         /* add_message might cause an error, thus, we free the closure first. */
@@ -662,13 +687,19 @@ notify_no_command (char *command, object_t *save_command_giver)
     }
     else if (driver_hook[H_NOTIFY_FAIL].type == T_STRING)
     {
+        printf("notify_no_command: Using H_NOTIFY_FAIL string hook\n");
         if (!useHook)
             tell_object(command_giver, driver_hook[H_NOTIFY_FAIL].u.str);
         else
+        {
+            printf("notify_no_command: H_NOTIFY_FAIL is a string: '%s'\n", 
+                   get_txt(driver_hook[H_NOTIFY_FAIL].u.str));
             push_svalue(&driver_hook[H_NOTIFY_FAIL]);
+        }
     }
     else if (driver_hook[H_NOTIFY_FAIL].type == T_CLOSURE)
     {
+        printf("notify_no_command: Using H_NOTIFY_FAIL closure hook\n");
         svalue_t cgsv = svalue_object(command_giver);
 
         push_c_string(inter_sp, command);
@@ -690,6 +721,7 @@ notify_no_command (char *command, object_t *save_command_giver)
     }
     else /* No H_NOTIFY_FAIL hook set, and no notify_fail() given */
     {
+        printf("notify_no_command: No valid error handling found!\n");
         free_svalue(svp); /* remember: this is &error_msg */
         svp->type = T_INVALID;
 
@@ -707,6 +739,7 @@ notify_no_command (char *command, object_t *save_command_giver)
      */
     if (useHook)
     {
+        printf("notify_no_command: Finalizing hook handling\n");
         if (error_obj != NULL)
             push_ref_valid_object(inter_sp, error_obj, "notify-fail error_obj");
         else
@@ -726,13 +759,14 @@ notify_no_command (char *command, object_t *save_command_giver)
         }
     }
 
+    printf("notify_no_command: Cleanup and exit\n");
     free_svalue(svp); /* remember: this is &error_msg */
     svp->type = T_INVALID;
 
     if (error_obj)
         free_object(error_obj, "notify_no_command");
     error_obj = NULL;
-
+    fflush(stdout);
 } /* notify_no_command() */
 
 /*-------------------------------------------------------------------------*/
@@ -1504,7 +1538,7 @@ f_execute_command (svalue_t *sp)
     if (len >= sizeof(buf) - 1)
         errorf("Command too long (size: %zu): '%.200s...'\n", 
                len, get_txt(argp->u.str));
-    strncpy(buf, get_txt(argp->u.str), len);
+    strncpy(buf, get_txt(argp[0].u.str), len);
     buf[len] = '\0';
 
     origin = check_object(argp[1].u.ob);

@@ -704,80 +704,170 @@ slice_words (vector_t *wvec, size_t from, size_t to)
 /*-------------------------------------------------------------------------*/
 static int
 find_string (string_t *str, vector_t *wvec, size_t *cix_in)
-
-/* Test if the (multi-word) string <str> exists in the array of words <wvec>
- * at or after position <cix_in>.
- * If found, return the starting position in <wvec> and set <cix_in> to
- * the position of the last word of the found string.
- * If not round, return -1, <cix_in> will be set to the end of <wvec>.
- */
-
 {
     int fpos;
     string_t *p1;
     char *p2;
     vector_t *split;
 
-    printf(" === find_string ===\n");
+    printf(" === find_string: %s ===\n", get_txt(str));
+    printf("     starting at index: %zu, wvec size: %ld\n", *cix_in, VEC_SIZE(wvec));
     fflush(stdout);
+
+    /* Validate input parameters */
+    if (!wvec || !str || !cix_in || (p_int)*cix_in >= VEC_SIZE(wvec)) {
+        printf("     ERROR: Invalid parameters - wvec: %p, size: %ld, cix_in: %zu\n", 
+               wvec ? (void*)wvec : NULL, wvec ? VEC_SIZE(wvec) : 0, *cix_in);
+        fflush(stdout);
+        if (cix_in && wvec) *cix_in = VEC_SIZE(wvec);
+        return -1;
+    }
 
     /* Step through wvec and look for a match */
     for (; (p_int)*cix_in < VEC_SIZE(wvec); (*cix_in)++)
     {
         p1 = wvec->item[*cix_in].u.str;
-
+        
+        /* Check if p1 is valid */
+        if (!p1) {
+            printf("     ERROR: Null string at index %zu\n", *cix_in);
+            fflush(stdout);
+            continue;
+        }
+        
+        printf("     Comparing with word at index %zu: '%s'\n", *cix_in, get_txt(p1));
+        fflush(stdout);
+        
         /* Quick test: first character has to match */
         if (get_txt(p1)[0] != get_txt(str)[0])
+        {
+            printf("     First character doesn't match\n");
+            fflush(stdout);
             continue;
-
+        }
+        
         if (mstreq(p1, str)) /* str was one word and we found it */
-            return (int)*cix_in;
-
-        if (!(p2 = strchr(get_txt(str), ' ')))
+        {
+            printf("     Found exact match at index %zu\n", *cix_in);
+            fflush(stdout);
+            int result = (int)*cix_in;
+            (*cix_in)++;  /* Important: increment cix_in after exact match */
+            return result;
+        }
+        
+        /* Check for multiword string */
+        p2 = strchr(get_txt(str), ' ');
+        if (!p2)
+        {
+            printf("     No space in search string, not a multiword\n");
+            fflush(stdout);
             continue;
-
-        /* If str is a multiword string and we need to make some special checks
-        */
-        if ((p_int)*cix_in + 1 == VEC_SIZE(wvec))
+        }
+        
+        printf("     Multiword string detected, checking further\n");
+        fflush(stdout);
+        
+        /* If str is a multiword string, we need to make some special checks */
+        if ((p_int)*cix_in + 1 >= VEC_SIZE(wvec))
+        {
+            printf("     At last word already, can't match multiword\n");
+            fflush(stdout);
             continue;
-
+        }
+        
         split = explode_string(str, STR_SPACE);
+        if (!split) {
+            printf("     Failed to explode search string\n");
+            fflush(stdout);
+            continue;
+        }
+        
+        printf("     Split search string into %ld parts\n", VEC_SIZE(split));
+        fflush(stdout);
 
         /* Now: wvec->size - *cix_in = 2: One extra word
          *                           = 3: Two extra words
          */
-        if (!split || VEC_SIZE(split) > (VEC_SIZE(wvec) - (p_int)*cix_in))
+        if (VEC_SIZE(split) > (VEC_SIZE(wvec) - (p_int)*cix_in))
         {
-            if (split)
-                free_array(split);
+            printf("     Not enough words left in wvec to match (%ld needed, %ld available)\n", 
+                  VEC_SIZE(split), (VEC_SIZE(wvec) - (p_int)*cix_in));
+            free_array(split);
+            fflush(stdout);
             continue;
         }
-
+        
         /* Test if the following words match the string */
         fpos = (int)*cix_in;
+        printf("     Starting multiword match at position %d\n", fpos);
+        fflush(stdout);
+        
+        /* Store the current position in case we need to restore it */
+        size_t original_cix = *cix_in;
+
+        /* Try to match each word in the split string with consecutive words in wvec */
         for (; *cix_in < (size_t)(VEC_SIZE(split) + fpos); (*cix_in)++)
         {
-            if (!mstreq(split->item[*cix_in-fpos].u.str,
-                       wvec->item[*cix_in].u.str))
+            size_t split_idx = *cix_in - fpos;
+            
+            /* Sanity check on array bounds */
+            if (split_idx >= (size_t)VEC_SIZE(split) || *cix_in >= (size_t)VEC_SIZE(wvec)) {
+                printf("     ERROR: Index out of bounds - split_idx: %zu, cix_in: %zu\n", 
+                      split_idx, *cix_in);
+                fflush(stdout);
                 break;
+            }
+            
+            if (split->item[split_idx].type != T_STRING || wvec->item[*cix_in].type != T_STRING) {
+                printf("     ERROR: Non-string value in arrays at split_idx: %zu, cix_in: %zu\n", 
+                      split_idx, *cix_in);
+                fflush(stdout);
+                break;
+            }
+            
+            printf("     Comparing split[%zu]='%s' with wvec[%zu]='%s'\n", 
+                  split_idx, get_txt(split->item[split_idx].u.str), 
+                  *cix_in, get_txt(wvec->item[*cix_in].u.str));
+            fflush(stdout);
+            
+            if (!mstreq(split->item[split_idx].u.str, wvec->item[*cix_in].u.str)) {
+                printf("     Mismatch in multiword comparison\n");
+                fflush(stdout);
+                break;
+            }
         }
-
+        
         /* If all of split matched, we found it */
         if ((p_int)(*cix_in - fpos) == VEC_SIZE(split))
         {
-            (*cix_in)--; /* point to the last matched word */
+            printf("     Multiword match successful, returning position %d\n", fpos);
+            fflush(stdout);
+            free_array(split);
             return fpos;
         }
-
-        /* Not found: continue search */
-        *cix_in = fpos;
-
+        
+        printf("     Multiword match failed, tried %zu of %ld words\n", 
+              (*cix_in - fpos), VEC_SIZE(split));
+        fflush(stdout);
+        
+        /* Not found: continue search with original position */
+        *cix_in = original_cix;
+        free_array(split);
     }
-
+    
+    /* Sanity check - ensure cix_in is within bounds of the vector */
+    if (*cix_in > (size_t)VEC_SIZE(wvec)) {
+        printf("     ERROR: Adjusting cix_in from %zu to %ld\n", 
+              *cix_in, VEC_SIZE(wvec));
+        *cix_in = VEC_SIZE(wvec);
+    }
+    
+    printf(" === find_string: not found, final cix_in: %zu ===\n", *cix_in);
+    fflush(stdout);
+    
     /* Not found */
-
     return -1;
-} /* find_string() */
+}
 
 /*-------------------------------------------------------------------------*/
 static int
@@ -1138,16 +1228,53 @@ match_object (size_t obix, vector_t *wvec, size_t *cix_in, Bool *plur)
                 old_cix = *cix_in;
                 if ((pos = find_string(str, wvec, cix_in)) >= 0)
                 {
-                    printf(" === Found match: %s ===\n", get_txt(str));
-                    /* Id matched, now check a possible adjective */
-                    if ((size_t)pos == old_cix
-                     || check_adjectiv(obix, wvec, old_cix, pos-1))
-                    {
+                    printf(" === Found match: %s === at position %d, cix_in is now %zu\n", 
+                           get_txt(str), pos, *cix_in);
+                    fflush(stdout);
+                    
+                    /* Validate returned position and cix_in */
+                    if (pos < 0 || (size_t)pos >= VEC_SIZE(wvec) || 
+                        *cix_in > VEC_SIZE(wvec)) {
+                        printf(" === ERROR: Invalid position from find_string: pos=%d, cix_in=%zu ===\n", 
+                               pos, *cix_in);
+                        fflush(stdout);
+                        *cix_in = old_cix;
+                        continue;
+                    }
+                    
+                    /* Direct matches don't need adjective check */
+                    if ((size_t)pos == old_cix) {
+                        printf(" === Position matched old_cix directly ===\n");
+                        fflush(stdout);
                         if (cplur > 1)
                             *plur = MY_TRUE;
                         return MY_TRUE;
                     }
+                    
+                    /* Safe adjective check */
+                    if (pos > 0 && old_cix < (size_t)pos) {
+                        printf(" === Checking adjective for pos=%d, old_cix=%zu ===\n", pos, old_cix);
+                        fflush(stdout);
+                        
+                        if (check_adjectiv(obix, wvec, old_cix, pos-1)) {
+                            printf(" === Adjective check passed ===\n");
+                            fflush(stdout);
+                            if (cplur > 1)
+                                *plur = MY_TRUE;
+                            return MY_TRUE;
+                        }
+                        
+                        printf(" === Adjective check failed ===\n");
+                        fflush(stdout);
+                    }
+                    else {
+                        printf(" === Skipping adjective check, invalid parameters: pos=%d, old_cix=%zu ===\n", 
+                               pos, old_cix);
+                        fflush(stdout);
+                    }
                 }
+                
+                /* Reset position */
                 *cix_in = old_cix;
             }
         } /* for(il) */
@@ -1209,12 +1336,32 @@ item_parse (vector_t *obvec, vector_t *wvec, size_t *cix_in, Bool *fail)
         match_all = MY_TRUE;
     }
 
+
+    /* In item_parse() function, before the for loop */
+    printf(" === item_parse: Loop initialization ===\n");
+    printf("     obvec size: %ld, wvec size: %ld\n", VEC_SIZE(obvec), VEC_SIZE(wvec));
+    printf("     initial cix_in: %zu, plur_flag: %s, match_all: %s\n", 
+        *cix_in, plur_flag ? "TRUE" : "FALSE", match_all ? "TRUE" : "FALSE");
+    if (pval) {
+        printf("     parsed numeral: %d\n", pval->u.number);
+    }
+    printf("     Beginning object scan loop with max_cix=%zu, tix=%zu\n", max_cix, tix);
+    fflush(stdout);
+
     /* Scan the object vector and try to match each one of it */
     for (max_cix = *cix_in, tix = 1, obix = 0; (p_int)obix < VEC_SIZE(obvec); obix++)
     {
         *fail = MY_FALSE;
         cix = *cix_in;
-        printf(" === Object to parse: %s ===\n", get_txt(obvec->item[obix].u.ob->name));
+
+        /* Inside the for loop, enhance the object debug output */
+        printf(" === Object to parse [%zu/%ld]: %s ===\n", 
+        obix, VEC_SIZE(obvec), 
+        (obvec->item[obix].type == T_OBJECT && obvec->item[obix].u.ob) ? 
+        get_txt(obvec->item[obix].u.ob->name) : "(invalid)");
+        printf("     Loop state: cix=%zu, tix=%zu, max_cix=%zu\n", cix, tix, max_cix);
+        fflush(stdout);
+
         if (obvec->item[obix].type != T_OBJECT)
             continue;
 
@@ -1226,32 +1373,58 @@ item_parse (vector_t *obvec, vector_t *wvec, size_t *cix_in, Bool *fail)
         }
 
         /* Get the id-info for this object */
+        if (obvec->item[obix].type != T_OBJECT || !obvec->item[obix].u.ob) {
+            printf(" === ERROR: Invalid object at index %zu ===\n", obix);
+            fflush(stdout);
+            continue;
+        }
+
         load_lpc_info(obix, obvec->item[obix].u.ob);
 
-        if (obvec->item[obix].u.ob->flags & O_DESTRUCTED) /* Oops */
-            continue;
+        /* After load_lpc_info but before match_object */
+        printf("     Calling match_object for object %zu with cix=%zu\n", obix, cix);
+        fflush(stdout);
 
-        if (match_object(obix, wvec, &cix, &plur_flag))
+        if (obvec->item[obix].u.ob->flags & O_DESTRUCTED) {
+            printf(" === Object at index %zu was destructed during load_lpc_info ===\n", obix);
+            fflush(stdout);
+            continue;
+        }
+
+        Bool match_found = match_object(obix, wvec, &cix, &plur_flag);
+        printf("     match_object result: %s, new cix=%zu\n", 
+            match_found ? "TRUE" : "FALSE", cix);
+        if (match_found)
         {
             assign_svalue_no_free(&tmp->item[tix++],&obvec->item[obix]);
             max_cix = (max_cix < cix) ? cix : max_cix;
         }
     }
 
+    // Add debugging right here
+    printf(" === item_parse: After matching all objects ===\n");
+    printf("     tix: %zu, max_cix: %zu, cix_in: %zu, wvec size: %ld\n", 
+           tix, max_cix, *cix_in, VEC_SIZE(wvec));
+    fflush(stdout);
+
     if (tix < 2)
     {
         /* No object matched: failure */
-        *fail = MY_TRUE;
-        free_array(tmp);
-        if (pval)
-            (*cix_in)--;
-        return NULL;
+        // ... existing code ...
     }
     else
     {
         /* We got matches: now compute the results */
-        if ((p_int)(*cix_in) < VEC_SIZE(wvec))
-            *cix_in = max_cix + 1;
+        printf("     Setting cix_in from %zu to %zu\n", *cix_in, max_cix + 1);
+        fflush(stdout);
+        
+        /* We got matches: now compute the results */
+        if ((p_int)(*cix_in) < VEC_SIZE(wvec)) {
+            if (max_cix + 1 <= (size_t)VEC_SIZE(wvec))
+                *cix_in = max_cix + 1;
+            else
+                *cix_in = VEC_SIZE(wvec);  // Cap at vector size
+        }
         ret = slice_array(tmp, 0, tix-1);
         if (!pval)
         {
